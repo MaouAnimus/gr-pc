@@ -20,7 +20,8 @@ add_library(gravity_runtime STATIC
     engine/src/pad/pad.cpp
     engine/src/audio/audio.cpp
     engine/src/gnm/gnm.cpp
-    engine/src/video.cpp)
+    engine/src/video.cpp
+    engine/src/runner/runner.cpp)
 target_include_directories(gravity_runtime PUBLIC engine/include)
 target_compile_features(gravity_runtime PUBLIC cxx_std_23)
 target_compile_definitions(gravity_runtime PUBLIC
@@ -46,6 +47,7 @@ if(BUILD_TESTING)
         add_test(NAME regression_${suite} COMMAND stabilization_tests ${suite})
         set_tests_properties(regression_${suite} PROPERTIES TIMEOUT 30)
     endforeach()
+
     add_executable(runtime_tests tests/runtime_tests.cpp)
     target_link_libraries(runtime_tests PRIVATE gravity_runtime)
     target_compile_options(runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -54,4 +56,22 @@ if(BUILD_TESTING)
         set_tests_properties(runtime_${suite} PROPERTIES TIMEOUT 30)
     endforeach()
     set_tests_properties(runtime_audio runtime_video PROPERTIES SKIP_RETURN_CODE 77)
+
+    # N04: Isolated Runner tests
+    add_executable(runner_tests tests/runner_tests.cpp)
+    target_link_libraries(runner_tests PRIVATE gravity_runtime)
+    target_compile_options(runner_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite success read_fault write_fault div_zero timeout module_mapping)
+        add_test(NAME runner_${suite} COMMAND runner_tests ${suite})
+        set_tests_properties(runner_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+
+    # N05: System V AMD64 ABI Matrix tests
+    add_executable(abi_matrix_tests tests/abi_matrix_tests.cpp)
+    target_link_libraries(abi_matrix_tests PRIVATE gravity_runtime)
+    target_compile_options(abi_matrix_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite registers stack floats mixed structs callbacks varargs returns)
+        add_test(NAME abi_matrix_${suite} COMMAND abi_matrix_tests ${suite})
+        set_tests_properties(abi_matrix_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
 endif()
