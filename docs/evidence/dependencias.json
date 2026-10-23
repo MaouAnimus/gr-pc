@@ -1,0 +1,1010 @@
+{
+  "version": "1.0",
+  "target": "Gravity Rush Remastered (CUSA01130)",
+  "summary": {
+    "total_imports": 681,
+    "total_libraries": 44,
+    "total_needed_modules": 42,
+    "total_dt_needed_prx": 43,
+    "verified_percentage": 94.13
+  },
+  "dt_needed_prx": [
+    "libkernel.prx",
+    "libc.prx",
+    "libSceGnmDriver_padebug.prx",
+    "libSceSysmodule.prx",
+    "libSceFiber.prx",
+    "libSceFios2.prx",
+    "libSceNgs2.prx",
+    "libSceNet.prx",
+    "libSceScreenShot.prx",
+    "libSceFont-module.prx",
+    "libSceFontFt-module.prx",
+    "libSceAudioOut.prx",
+    "libSceAvPlayer.prx",
+    "libSceVideoOut.prx",
+    "libSceSystemService.prx",
+    "libSceUserService.prx",
+    "libScePad.prx",
+    "libSceCommonDialog.prx",
+    "libSceSaveData.prx",
+    "libSceSaveDataDialog.prx",
+    "libSceNpCommon.prx",
+    "libSceNpManager.prx",
+    "libSceNpTrophy.prx",
+    "libSceErrorDialog.prx",
+    "libSceMsgDialog.prx",
+    "libSceNpWebApi.prx",
+    "libSceNpAuth.prx",
+    "libSceInvitationDialog.prx",
+    "libSceGameCustomDataDialog.prx",
+    "libSceRtc.prx",
+    "libSceNpCommerce.prx",
+    "libSceNetCtl.prx",
+    "libSceHttp.prx",
+    "libSceSsl.prx",
+    "libSceNpMatching2.prx",
+    "libSceNpTus.prx",
+    "libSceNpUtility.prx",
+    "libSceNpScoreRanking.prx",
+    "libSceNpSns.prx",
+    "libSceNpSnsFacebookDialog.prx",
+    "libSceNpProfileDialog.prx",
+    "libScePlayGo.prx",
+    "libSceAudio3d.prx"
+  ],
+  "import_libraries": [
+    {
+      "id": 31,
+      "name": "libSceGameCustomDataDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 46,
+      "name": "libSceAudio3d",
+      "version": "0.1"
+    },
+    {
+      "id": 14,
+      "name": "libSceAudioOut",
+      "version": "0.1"
+    },
+    {
+      "id": 15,
+      "name": "libSceAvPlayer",
+      "version": "0.1"
+    },
+    {
+      "id": 20,
+      "name": "libSceCommonDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 26,
+      "name": "libSceErrorDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 7,
+      "name": "libSceFiber",
+      "version": "0.1"
+    },
+    {
+      "id": 8,
+      "name": "libSceFios2",
+      "version": "0.1"
+    },
+    {
+      "id": 12,
+      "name": "libSceFont",
+      "version": "0.1"
+    },
+    {
+      "id": 13,
+      "name": "libSceFontFt",
+      "version": "0.1"
+    },
+    {
+      "id": 4,
+      "name": "libSceGnmDriver",
+      "version": "0.1"
+    },
+    {
+      "id": 35,
+      "name": "libSceHttp",
+      "version": "0.1"
+    },
+    {
+      "id": 30,
+      "name": "libSceInvitationDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 27,
+      "name": "libSceMsgDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 10,
+      "name": "libSceNet",
+      "version": "0.1"
+    },
+    {
+      "id": 34,
+      "name": "libSceNetCtl",
+      "version": "0.1"
+    },
+    {
+      "id": 9,
+      "name": "libSceNgs2",
+      "version": "0.1"
+    },
+    {
+      "id": 29,
+      "name": "libSceNpAuth",
+      "version": "0.1"
+    },
+    {
+      "id": 33,
+      "name": "libSceNpCommerce",
+      "version": "0.1"
+    },
+    {
+      "id": 23,
+      "name": "libSceNpCommon",
+      "version": "0.1"
+    },
+    {
+      "id": 24,
+      "name": "libSceNpManager",
+      "version": "0.1"
+    },
+    {
+      "id": 41,
+      "name": "libSceNpSns",
+      "version": "0.1"
+    },
+    {
+      "id": 37,
+      "name": "libSceNpMatching2",
+      "version": "0.1"
+    },
+    {
+      "id": 44,
+      "name": "libSceNpProfileDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 40,
+      "name": "libSceNpScore",
+      "version": "0.1"
+    },
+    {
+      "id": 42,
+      "name": "libSceNpSnsFacebookDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 25,
+      "name": "libSceNpTrophy",
+      "version": "0.1"
+    },
+    {
+      "id": 38,
+      "name": "libSceNpTus",
+      "version": "0.1"
+    },
+    {
+      "id": 39,
+      "name": "libSceNpUtility",
+      "version": "0.1"
+    },
+    {
+      "id": 28,
+      "name": "libSceNpWebApi",
+      "version": "0.1"
+    },
+    {
+      "id": 19,
+      "name": "libScePad",
+      "version": "0.1"
+    },
+    {
+      "id": 45,
+      "name": "libScePlayGo",
+      "version": "0.1"
+    },
+    {
+      "id": 32,
+      "name": "libSceRtc",
+      "version": "0.1"
+    },
+    {
+      "id": 21,
+      "name": "libSceSaveData",
+      "version": "0.1"
+    },
+    {
+      "id": 22,
+      "name": "libSceSaveDataDialog",
+      "version": "0.1"
+    },
+    {
+      "id": 11,
+      "name": "libSceScreenShot",
+      "version": "0.1"
+    },
+    {
+      "id": 36,
+      "name": "libSceSsl",
+      "version": "0.1"
+    },
+    {
+      "id": 6,
+      "name": "libSceSysmodule",
+      "version": "0.1"
+    },
+    {
+      "id": 17,
+      "name": "libSceSystemService",
+      "version": "0.1"
+    },
+    {
+      "id": 18,
+      "name": "libSceUserService",
+      "version": "0.1"
+    },
+    {
+      "id": 16,
+      "name": "libSceVideoOut",
+      "version": "0.1"
+    },
+    {
+      "id": 43,
+      "name": "libc",
+      "version": "0.1"
+    },
+    {
+      "id": 5,
+      "name": "libScePosix",
+      "version": "0.1"
+    },
+    {
+      "id": 3,
+      "name": "libkernel",
+      "version": "0.1"
+    }
+  ],
+  "needed_modules": [
+    {
+      "id": 1,
+      "name": "libkernel",
+      "version": "1.1"
+    },
+    {
+      "id": 2,
+      "name": "libc",
+      "version": "1.1"
+    },
+    {
+      "id": 3,
+      "name": "libSceGnmDriver",
+      "version": "1.1"
+    },
+    {
+      "id": 4,
+      "name": "libSceSysmodule",
+      "version": "1.1"
+    },
+    {
+      "id": 5,
+      "name": "libSceFiber",
+      "version": "1.1"
+    },
+    {
+      "id": 6,
+      "name": "libSceFios2",
+      "version": "1.1"
+    },
+    {
+      "id": 7,
+      "name": "libSceNgs2",
+      "version": "1.1"
+    },
+    {
+      "id": 8,
+      "name": "libSceNet",
+      "version": "1.1"
+    },
+    {
+      "id": 9,
+      "name": "libSceScreenShot",
+      "version": "0.9"
+    },
+    {
+      "id": 10,
+      "name": "libSceFont",
+      "version": "1.1"
+    },
+    {
+      "id": 11,
+      "name": "libSceFontFt",
+      "version": "1.1"
+    },
+    {
+      "id": 12,
+      "name": "libSceAudioOut",
+      "version": "1.1"
+    },
+    {
+      "id": 13,
+      "name": "libSceAvPlayer",
+      "version": "1.0"
+    },
+    {
+      "id": 14,
+      "name": "libSceVideoOut",
+      "version": "0.0"
+    },
+    {
+      "id": 15,
+      "name": "libSceSystemService",
+      "version": "1.1"
+    },
+    {
+      "id": 16,
+      "name": "libSceUserService",
+      "version": "1.1"
+    },
+    {
+      "id": 17,
+      "name": "libScePad",
+      "version": "1.1"
+    },
+    {
+      "id": 18,
+      "name": "libSceCommonDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 19,
+      "name": "libSceSaveData",
+      "version": "1.1"
+    },
+    {
+      "id": 20,
+      "name": "libSceSaveDataDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 21,
+      "name": "libSceNpCommon",
+      "version": "1.1"
+    },
+    {
+      "id": 22,
+      "name": "libSceNpManager",
+      "version": "1.1"
+    },
+    {
+      "id": 23,
+      "name": "libSceNpTrophy",
+      "version": "1.1"
+    },
+    {
+      "id": 24,
+      "name": "libSceErrorDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 25,
+      "name": "libSceMsgDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 26,
+      "name": "libSceNpWebApi",
+      "version": "1.1"
+    },
+    {
+      "id": 27,
+      "name": "libSceNpAuth",
+      "version": "1.1"
+    },
+    {
+      "id": 28,
+      "name": "libSceInvitationDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 29,
+      "name": "libGameCustomDataDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 30,
+      "name": "libSceRtc",
+      "version": "1.1"
+    },
+    {
+      "id": 31,
+      "name": "libSceNpCommerce",
+      "version": "1.1"
+    },
+    {
+      "id": 32,
+      "name": "libSceNetCtl",
+      "version": "1.1"
+    },
+    {
+      "id": 33,
+      "name": "libSceHttp",
+      "version": "1.1"
+    },
+    {
+      "id": 34,
+      "name": "libSceSsl",
+      "version": "1.1"
+    },
+    {
+      "id": 35,
+      "name": "libSceNpMatching2",
+      "version": "0.0"
+    },
+    {
+      "id": 36,
+      "name": "libSceNpTus",
+      "version": "1.1"
+    },
+    {
+      "id": 37,
+      "name": "libSceNpUtility",
+      "version": "1.1"
+    },
+    {
+      "id": 38,
+      "name": "libSceNpScore",
+      "version": "1.1"
+    },
+    {
+      "id": 39,
+      "name": "libSceNpSnsFacebookDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 40,
+      "name": "libSceNpProfileDialog",
+      "version": "1.1"
+    },
+    {
+      "id": 41,
+      "name": "libScePlayGo",
+      "version": "1.0"
+    },
+    {
+      "id": 42,
+      "name": "libSceAudio3d",
+      "version": "1.1"
+    }
+  ],
+  "local_prx_modules": [
+    {
+      "name": "libSceFace.prx",
+      "size_bytes": 299672,
+      "sha256": "89e134d3162323b29ad89c4af77b9db6501acca4ea382a3d62284c5e99584bd5",
+      "needed_prx": [
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 29
+    },
+    {
+      "name": "libSceFios2.prx",
+      "size_bytes": 385249,
+      "sha256": "3b8eb4d5a5c5a7b381d8d0610077e6cd404c29695a686274802f6b2737f6bf22",
+      "needed_prx": [
+        "libSceDiscMap.prx",
+        "libSceSysmodule.prx",
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 165
+    },
+    {
+      "name": "libSceHand.prx",
+      "size_bytes": 25962,
+      "sha256": "0ef7de31c741b20a50b641bdc576ff9df467509eb511e60cb43d7ee5f240b070",
+      "needed_prx": [
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 5
+    },
+    {
+      "name": "libSceHeadTracker.prx",
+      "size_bytes": 1350418,
+      "sha256": "2ebfb4c208c3fbdd38c5f7a0f95f50b682ce2126a539c9be3fb9792ad761e1cb",
+      "needed_prx": [
+        "libSceSysmodule.prx",
+        "libSceCamera.prx",
+        "libScePad.prx",
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 9
+    },
+    {
+      "name": "libSceS3DConversion.prx",
+      "size_bytes": 292658,
+      "sha256": "86a854022a1ad1a2940787acd7e47c7a84e67148b2b641dba5452771506d20b9",
+      "needed_prx": [
+        "libSceGnmDriver_padebug.prx",
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 4
+    },
+    {
+      "name": "libSceSmart.prx",
+      "size_bytes": 1452561,
+      "sha256": "43f433e5459033e201bea857002343bb2436c03c33401c4f0c938b3e197df1ab",
+      "needed_prx": [
+        "libkernel.prx",
+        "libSceLibcInternal.prx"
+      ],
+      "exported_symbol_count": 48
+    },
+    {
+      "name": "libc.prx",
+      "size_bytes": 934754,
+      "sha256": "4378b47f46f1d856824a6f971db1a0c3f41833b77f49d2fba9538f667a139166",
+      "needed_prx": [
+        "libkernel.prx",
+        "libSceFios2.prx"
+      ],
+      "exported_symbol_count": 2140
+    }
+  ],
+  "library_breakdown": [
+    {
+      "library": "libc",
+      "priority": "P0",
+      "total_imports": 165,
+      "functions": 165,
+      "objects": 0,
+      "verified": 165,
+      "unverified": 0,
+      "exported_by_local_prx": 165
+    },
+    {
+      "library": "libkernel",
+      "priority": "P0",
+      "total_imports": 69,
+      "functions": 68,
+      "objects": 1,
+      "verified": 62,
+      "unverified": 7,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceGnmDriver",
+      "priority": "P1",
+      "total_imports": 50,
+      "functions": 50,
+      "objects": 0,
+      "verified": 50,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceFios2",
+      "priority": "P1",
+      "total_imports": 41,
+      "functions": 41,
+      "objects": 0,
+      "verified": 41,
+      "unverified": 0,
+      "exported_by_local_prx": 41
+    },
+    {
+      "library": "libSceNpMatching2",
+      "priority": "P2",
+      "total_imports": 29,
+      "functions": 29,
+      "objects": 0,
+      "verified": 29,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpWebApi",
+      "priority": "P2",
+      "total_imports": 23,
+      "functions": 23,
+      "objects": 0,
+      "verified": 23,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNet",
+      "priority": "P2",
+      "total_imports": 21,
+      "functions": 21,
+      "objects": 0,
+      "verified": 21,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceFont",
+      "priority": "P2",
+      "total_imports": 20,
+      "functions": 20,
+      "objects": 0,
+      "verified": 20,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpManager",
+      "priority": "P2",
+      "total_imports": 17,
+      "functions": 17,
+      "objects": 0,
+      "verified": 11,
+      "unverified": 6,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpUtility",
+      "priority": "P2",
+      "total_imports": 17,
+      "functions": 17,
+      "objects": 0,
+      "verified": 17,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libScePosix",
+      "priority": "P0",
+      "total_imports": 17,
+      "functions": 17,
+      "objects": 0,
+      "verified": 16,
+      "unverified": 1,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceAvPlayer",
+      "priority": "P1",
+      "total_imports": 15,
+      "functions": 15,
+      "objects": 0,
+      "verified": 15,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpScore",
+      "priority": "P2",
+      "total_imports": 15,
+      "functions": 15,
+      "objects": 0,
+      "verified": 15,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceHttp",
+      "priority": "P2",
+      "total_imports": 14,
+      "functions": 14,
+      "objects": 0,
+      "verified": 14,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpTrophy",
+      "priority": "P2",
+      "total_imports": 13,
+      "functions": 13,
+      "objects": 0,
+      "verified": 13,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpTus",
+      "priority": "P2",
+      "total_imports": 13,
+      "functions": 13,
+      "objects": 0,
+      "verified": 13,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceSaveData",
+      "priority": "P2",
+      "total_imports": 11,
+      "functions": 11,
+      "objects": 0,
+      "verified": 11,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNgs2",
+      "priority": "P1",
+      "total_imports": 10,
+      "functions": 10,
+      "objects": 0,
+      "verified": 10,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNetCtl",
+      "priority": "P2",
+      "total_imports": 9,
+      "functions": 9,
+      "objects": 0,
+      "verified": 9,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceAudio3d",
+      "priority": "P1",
+      "total_imports": 8,
+      "functions": 8,
+      "objects": 0,
+      "verified": 8,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceAudioOut",
+      "priority": "P1",
+      "total_imports": 8,
+      "functions": 8,
+      "objects": 0,
+      "verified": 8,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libScePad",
+      "priority": "P1",
+      "total_imports": 8,
+      "functions": 8,
+      "objects": 0,
+      "verified": 8,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libScePlayGo",
+      "priority": "P1",
+      "total_imports": 7,
+      "functions": 7,
+      "objects": 0,
+      "verified": 7,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceSaveDataDialog",
+      "priority": "P2",
+      "total_imports": 7,
+      "functions": 7,
+      "objects": 0,
+      "verified": 7,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceVideoOut",
+      "priority": "P1",
+      "total_imports": 6,
+      "functions": 6,
+      "objects": 0,
+      "verified": 6,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceGameCustomDataDialog",
+      "priority": "P2",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 5,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceFiber",
+      "priority": "P0",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 5,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceInvitationDialog",
+      "priority": "P2",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 5,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceMsgDialog",
+      "priority": "P2",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 5,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpCommerce",
+      "priority": "P2",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 5,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "total_imports": 5,
+      "functions": 5,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 5,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceErrorDialog",
+      "priority": "P2",
+      "total_imports": 4,
+      "functions": 4,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 4,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpProfileDialog",
+      "priority": "P2",
+      "total_imports": 4,
+      "functions": 4,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 4,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceRtc",
+      "priority": "P2",
+      "total_imports": 4,
+      "functions": 4,
+      "objects": 0,
+      "verified": 4,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceScreenShot",
+      "priority": "P2",
+      "total_imports": 4,
+      "functions": 4,
+      "objects": 0,
+      "verified": 4,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceUserService",
+      "priority": "P2",
+      "total_imports": 4,
+      "functions": 4,
+      "objects": 0,
+      "verified": 4,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpAuth",
+      "priority": "P2",
+      "total_imports": 3,
+      "functions": 3,
+      "objects": 0,
+      "verified": 3,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpSns",
+      "priority": "P2",
+      "total_imports": 3,
+      "functions": 3,
+      "objects": 0,
+      "verified": 0,
+      "unverified": 3,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceSysmodule",
+      "priority": "P0",
+      "total_imports": 3,
+      "functions": 3,
+      "objects": 0,
+      "verified": 3,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceSystemService",
+      "priority": "P2",
+      "total_imports": 3,
+      "functions": 3,
+      "objects": 0,
+      "verified": 3,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceFontFt",
+      "priority": "P2",
+      "total_imports": 2,
+      "functions": 2,
+      "objects": 0,
+      "verified": 2,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceSsl",
+      "priority": "P2",
+      "total_imports": 2,
+      "functions": 2,
+      "objects": 0,
+      "verified": 2,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceCommonDialog",
+      "priority": "P2",
+      "total_imports": 1,
+      "functions": 1,
+      "objects": 0,
+      "verified": 1,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    },
+    {
+      "library": "libSceNpCommon",
+      "priority": "P2",
+      "total_imports": 1,
+      "functions": 1,
+      "objects": 0,
+      "verified": 1,
+      "unverified": 0,
+      "exported_by_local_prx": 0
+    }
+  ]
+}

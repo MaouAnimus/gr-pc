@@ -1,3 +1,18 @@
+## 2026-10-23 — Tareas N01 y N02 (Baseline, Manifiesto e Inventario Dinámico Completo)
+
+- **N01 — Baseline y Manifiesto CUSA01130:**
+  - Inicializado repositorio local Git (`78d277b`).
+  - Generado manifiesto criptográfico de integridad de la copia del juego en `docs/evidence/manifest_cusa01130.json` (45 archivos, 9.874.426.520 bytes, hashes SHA-256 calculados sin modificar archivos originales).
+  - Extraídos metadatos oficiales de `param.sfo`: Title ID `CUSA01130`, Versión `01.00`, Content ID `UP9000-CUSA01130_00-GRAVITYRUSHHD000`.
+
+- **N02 — Exportar Imports, Dependencias e Incertidumbres:**
+  - Descubierto y verificado el algoritmo matemático exacto de resolución de NIDs de Sony Orbis:
+    `NID = Base64(SHA1(nombre + salt_sony)[0:8][::-1])` con `salt = 518D64A635DED8C1E6B039B1C3E55230`.
+  - Corregidas atribuciones históricas erróneas (ej. `uMei1W9uyNo` es `exit`, no `calloc`; `tIhsqj0qsFE` es `free`; `2X5agFjKxMc` es `calloc`).
+  - Generado `docs/evidence/imports.json` catalogando los 681 imports de `eboot.bin` con su NID, símbolo sin procesar, biblioteca decodificada (44 librerías), módulo (42 módulos), tipo de símbolo (función/objeto), tipo de relocalización (PLT vs GLOB_DAT/64), prioridad (P0/P1/P2) y clasificación de acción. 641 de 681 (94.13%) verificados con evidencia auténtica.
+  - Generado `docs/evidence/dependencias.json` con el grafo completo de 44 librerías importadas, 43 PRX en DT_NEEDED, y la auditoría de los 7 PRX locales en `sce_module/` (demostrando que `libc.prx` provee 165 imports y `libSceFios2.prx` provee 41 imports directamente en el volcado).
+  - Generado `docs/evidence/incertidumbres.json` documentando con precisión las 40 incógnitas pendientes (32 correspondientes a diálogos y servicios sociales/PSN opcionales P2, y 8 de infraestructura P0).
+
 ## 2026-10-23 — Estabilización
 
 Cargador validado y con reversión, RELA/PLT completas en inspección, importaciones pendientes explícitas, VFS sin bloqueo, ABI corregida, errores de audio/vídeo visibles y cinco suites de regresión. Validación final: 14/14 Debug y Release. El juego todavía no se ejecuta. Ver [informe](ESTABILIZACION.md).

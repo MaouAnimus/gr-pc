@@ -1,0 +1,458 @@
+{
+  "version": "1.0",
+  "description": "Lista explícita de incertidumbres y símbolos pendientes para el port nativo de PC",
+  "total_uncertainties": 40,
+  "uncertainties_by_library": {
+    "libSceErrorDialog": 4,
+    "libSceGameCustomDataDialog": 5,
+    "libSceInvitationDialog": 5,
+    "libSceNpManager": 6,
+    "libSceNpProfileDialog": 4,
+    "libSceNpSns": 3,
+    "libSceNpSnsFacebookDialog": 5,
+    "libScePosix": 1,
+    "libkernel": 7
+  },
+  "symbols": [
+    {
+      "nid": "xtbb-2f703A",
+      "raw_symbol": "xtbb-2f703A#f#d",
+      "library": "libSceGameCustomDataDialog",
+      "module": "libGameCustomDataDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "5TvttyRuU84",
+      "raw_symbol": "5TvttyRuU84#f#d",
+      "library": "libSceGameCustomDataDialog",
+      "module": "libGameCustomDataDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "HwEtHFCpU5U",
+      "raw_symbol": "HwEtHFCpU5U#f#d",
+      "library": "libSceGameCustomDataDialog",
+      "module": "libGameCustomDataDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "PkdLsRA4ON0",
+      "raw_symbol": "PkdLsRA4ON0#f#d",
+      "library": "libSceGameCustomDataDialog",
+      "module": "libGameCustomDataDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "sJptZwvs1is",
+      "raw_symbol": "sJptZwvs1is#f#d",
+      "library": "libSceGameCustomDataDialog",
+      "module": "libGameCustomDataDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "WWiGuh9XfgQ",
+      "raw_symbol": "WWiGuh9XfgQ#a#Y",
+      "library": "libSceErrorDialog",
+      "module": "libSceErrorDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "9XAxK2PMwk8",
+      "raw_symbol": "9XAxK2PMwk8#a#Y",
+      "library": "libSceErrorDialog",
+      "module": "libSceErrorDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "I88KChlynSs",
+      "raw_symbol": "I88KChlynSs#a#Y",
+      "library": "libSceErrorDialog",
+      "module": "libSceErrorDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "M2ZF-ClLhgY",
+      "raw_symbol": "M2ZF-ClLhgY#a#Y",
+      "library": "libSceErrorDialog",
+      "module": "libSceErrorDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "XvA5KS56wcs",
+      "raw_symbol": "XvA5KS56wcs#e#c",
+      "library": "libSceInvitationDialog",
+      "module": "libSceInvitationDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "0zU0G+wiVLA",
+      "raw_symbol": "0zU0G+wiVLA#e#c",
+      "library": "libSceInvitationDialog",
+      "module": "libSceInvitationDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "B6HVJtDYxEE",
+      "raw_symbol": "B6HVJtDYxEE#e#c",
+      "library": "libSceInvitationDialog",
+      "module": "libSceInvitationDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "9+g9iOq+7kg",
+      "raw_symbol": "9+g9iOq+7kg#e#c",
+      "library": "libSceInvitationDialog",
+      "module": "libSceInvitationDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "8XKR6wa64iQ",
+      "raw_symbol": "8XKR6wa64iQ#e#c",
+      "library": "libSceInvitationDialog",
+      "module": "libSceInvitationDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "s4UEa5iBJdc",
+      "raw_symbol": "s4UEa5iBJdc#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "+anuSx2avHQ",
+      "raw_symbol": "+anuSx2avHQ#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "GFhVUpRmbHE",
+      "raw_symbol": "GFhVUpRmbHE#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Vh1bhUG6mSs",
+      "raw_symbol": "Vh1bhUG6mSs#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "ON7Sf5XEMmI",
+      "raw_symbol": "ON7Sf5XEMmI#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "bMG3cVmUmuk",
+      "raw_symbol": "bMG3cVmUmuk#Y#W",
+      "library": "libSceNpManager",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "OoTjfxl8-wI",
+      "raw_symbol": "OoTjfxl8-wI#p#W",
+      "library": "libSceNpSns",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "VtyS8XLBqNE",
+      "raw_symbol": "VtyS8XLBqNE#p#W",
+      "library": "libSceNpSns",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "pTvAKV1iQkE",
+      "raw_symbol": "pTvAKV1iQkE#p#W",
+      "library": "libSceNpSns",
+      "module": "libSceNpManager",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "haVZE9FgKqE",
+      "raw_symbol": "haVZE9FgKqE#s#o",
+      "library": "libSceNpProfileDialog",
+      "module": "libSceNpProfileDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "0Sp9vJcB1-w",
+      "raw_symbol": "0Sp9vJcB1-w#s#o",
+      "library": "libSceNpProfileDialog",
+      "module": "libSceNpProfileDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Lg+NCE6pTwQ",
+      "raw_symbol": "Lg+NCE6pTwQ#s#o",
+      "library": "libSceNpProfileDialog",
+      "module": "libSceNpProfileDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "uj9Cz7Tk0cc",
+      "raw_symbol": "uj9Cz7Tk0cc#s#o",
+      "library": "libSceNpProfileDialog",
+      "module": "libSceNpProfileDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "tdQArULbNQk",
+      "raw_symbol": "tdQArULbNQk#q#n",
+      "library": "libSceNpSnsFacebookDialog",
+      "module": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Hi3onqHSN6M",
+      "raw_symbol": "Hi3onqHSN6M#q#n",
+      "library": "libSceNpSnsFacebookDialog",
+      "module": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "fjV7C8H0Y8k",
+      "raw_symbol": "fjV7C8H0Y8k#q#n",
+      "library": "libSceNpSnsFacebookDialog",
+      "module": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "AifdcI1aKas",
+      "raw_symbol": "AifdcI1aKas#q#n",
+      "library": "libSceNpSnsFacebookDialog",
+      "module": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "cdqOFyupRS4",
+      "raw_symbol": "cdqOFyupRS4#q#n",
+      "library": "libSceNpSnsFacebookDialog",
+      "module": "libSceNpSnsFacebookDialog",
+      "priority": "P2",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "wtkt-teR1so",
+      "raw_symbol": "wtkt-teR1so#F#B",
+      "library": "libScePosix",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "nsYoNRywwNg",
+      "raw_symbol": "nsYoNRywwNg#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "UTXzJbWhhTE",
+      "raw_symbol": "UTXzJbWhhTE#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "62KCwEMmzcM",
+      "raw_symbol": "62KCwEMmzcM#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "vNe1w4diLCs",
+      "raw_symbol": "vNe1w4diLCs#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "3qxgM4ezETA",
+      "raw_symbol": "3qxgM4ezETA#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "eXbUSpEaTsA",
+      "raw_symbol": "eXbUSpEaTsA#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "DzES9hQF4f4",
+      "raw_symbol": "DzES9hQF4f4#D#B",
+      "library": "libkernel",
+      "module": "libkernel",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    }
+  ]
+}
