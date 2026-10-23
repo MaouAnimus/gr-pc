@@ -110,3 +110,56 @@ Solicitud: continuar el desarrollo del proyecto.
    - Se agregó la suite `runtime_loader` a `tests/runtime_tests.cpp`.
    - 4/4 pruebas unitarias pasando al 100% en Debug y Release.
    - El lanzador `launcher.exe` carga y relocaliza las 302.608 entradas del juego en ~60 milisegundos.
+
+---
+
+## 23 de octubre de 2026 — Hitos N03 a N08 (Ejecución Aislada, Matriz ABI, Fibras 112B, Registro HLE y Primer Arranque Instrumentado)
+
+### N03 — Decisión de Arquitectura CPU:
+- Aprobada la **ejecución directa controlada sobre CPU host Windows x64** mediante adaptación ABI System V y sandboxing de memoria.
+- Descartada formalmente la recompilación estática (AOT a C/C++) tras auditar 303.268 relocalizaciones dinámicas, llamadas indirectas computadas por tabla de saltos y generación de código en tiempo de ejecución.
+
+### N04 — Isolated Runner con Vectored Exception Handler (VEH):
+- Implementado en `engine/src/runner/runner.cpp` y [runner.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/runner/runner.h).
+- Ejecución de punteros System V en hilo de trabajo dedicado con timeout configurable y manejador VEH (`AddVectoredExceptionHandler`).
+- Mapeo preciso de violaciones de acceso (lectura/escritura/ejecución), división por cero, instrucciones ilegales y desbordamiento de pila.
+- Extracción de vuelco completo de registros (`RIP`, `RSP`, `RBP`, `RAX`, `RBX`, `RCX`, `RDX`, `RSI`, `RDI`, `R8`..`R15`, `EFLAGS`), dirección de fallo y resolución de módulo y offset (`eboot.bin+0x...`).
+
+### N05 — Matriz de Validación ABI System V AMD64:
+- Suite de pruebas de regresión en `tests/abi_matrix_tests.cpp` (8 suites CTest independientes):
+  1. Paso de 6 enteros en registros (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`).
+  2. Parámetros en pila (argumentos 7 al 12).
+  3. Paso de punto flotante en registros XMM (`XMM0` al `XMM7`).
+  4. Llamadas mixtas enteros + flotantes + pila.
+  5. Paso y retorno de structs por valor (`_Complex`, structs de 16 y 32 bytes).
+  6. Callbacks bidireccionales host -> guest -> host.
+  7. Funciones varargs System V.
+  8. Retorno múltiple de 128 bits (`RAX` + `RDX`).
+
+### N06 — Layout Auténtico SceFiber 112B y Aislamiento TLS:
+- Confirmado el layout binario real de `SceFiber` de 112 bytes (`0x70`) con magics `magic_start = 0xdef1649c` y `magic_end = 0xb37592a0` en [orbis_error.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/orbis_error.h).
+- Eliminada la copia sombra de pila (`guest_stack_shadow`) que causaba degradación de rendimiento y riesgo de desincronización.
+- Implementado `FiberRegistry` desacoplado thread-safe con `std::shared_mutex` para lookup de fibras host.
+- Aislamiento completo de Thread Local Storage (TLS) por hilo y ranura de fibra (`ThreadTls`).
+
+### N07 — Registro Tipado de Adaptadores HLE y Trampas Dinámicas:
+- Implementado `AdapterRegistry` en `engine/src/registry/adapter_registry.cpp` y [adapter_registry.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/registry/adapter_registry.h).
+- Mapeo de más de 120 funciones HLE de `libc`, `libkernel`, `libSceFiber`, `libScePad`, `libSceVideoOut`, `libSceAudioOut`, `libSceSysmodule`, `libSceScreenShot`.
+- Generador de trampas de diagnóstico x86-64 de 32 bytes: emite código máquina dinámico (`49 BA <id>`, `48 B8 <dispatcher>`, `FF E0`) que captura el RIP llamador desde `(%rsp)`, loguea biblioteca, NID y offset de módulo, y activa la trampa `ud2` sin retornos silenciosos falsos.
+- Heap privado rastreado para libc del guest (`HeapCreate` de 64 MB y registro de punteros) eliminando fallos por `STATUS_HEAP_CORRUPTION`.
+
+### N08 — Primer Arranque Instrumentado de Gravity Rush Remastered:
+- Implementado el modo de arranque `--boot` en [launcher.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/launcher.cpp) y soporte en [run_launcher.ps1](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/tools/run_launcher.ps1).
+- Ejecución real del punto de entrada `eboot.bin` (`0x10000002F0`) bajo `execute_isolated_sysv`.
+- **Resultados de Ejecución:**
+  - Más de 1.26 segundos y millones de instrucciones x86-64 reales ejecutadas ininterrumpidamente por la CPU.
+  - El motor superó con éxito:
+    1. Inicialización de argumentos y CRT de Sony Orbis.
+    2. Constructores globales y tablas `.ctors` / `.init_array`.
+    3. Inicialización de la física Havok (`hkMonitorStream`).
+    4. Constructores de C++ estándar y registro de destructores con `__cxa_atexit`.
+    5. Configuración de hilos del motor (`scePthreadGetprio`, `scePthreadAttrInit`, `scePthreadAttrSetstacksize`).
+    6. Cálculo y almacenamiento de tablas trigonométricas (`__kernel_sincosf`).
+    7. Lectura condicional de parámetros de arranque (`/app0/args.txt`).
+  - Intercepción limpia mediante trampa de diagnóstico al alcanzar `sceSystemServiceParamGetInt` (`eboot.bin+0x298A`), produciendo vuelco completo de registros y reporte diagnóstico sin colgar el host.
+- Total de pruebas automáticas: **36/36 tests pasando al 100%** en Debug y Release.

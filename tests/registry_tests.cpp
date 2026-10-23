@@ -67,6 +67,12 @@ void test_registry_lookup() {
     CHECK(reg.resolve("ekNvsT22rsY") != 0); // sceAudioOutOpen
     CHECK(reg.resolve("s1--uE9mBFw") != 0); // sceAudioOutClose
 
+    // 7. C++ ABI & Threading lookups
+    CHECK(reg.resolve("tsvEmnenz48") != 0); // __cxa_atexit
+    CHECK(reg.resolve("1tKyG7RlMJo") != 0); // scePthreadGetprio
+    CHECK(reg.resolve("6UgtwV+0zb4") != 0); // scePthreadCreate
+    CHECK(reg.resolve("g8cM39EUZ6o") != 0); // sceSysmoduleLoadModule
+
     std::puts("PASS: test_registry_lookup");
 }
 

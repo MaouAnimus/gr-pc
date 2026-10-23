@@ -1,6 +1,8 @@
 param(
     [switch]$Headless,
     [switch]$Strict,
+    [switch]$Boot,
+    [int]$TimeoutMs = 0,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
 )
 $ErrorActionPreference = 'Stop'
@@ -9,6 +11,8 @@ $savedPath = $env:PATH
 $runtimeArguments = @()
 if ($Headless) { $runtimeArguments += '--headless' }
 if ($Strict) { $runtimeArguments += '--strict' }
+if ($Boot) { $runtimeArguments += '--boot' }
+if ($TimeoutMs -gt 0) { $runtimeArguments += "--timeout=$TimeoutMs" }
 try {
     $env:PATH = "C:\msys64\clang64\bin;$savedPath"
     Push-Location -LiteralPath $projectRoot

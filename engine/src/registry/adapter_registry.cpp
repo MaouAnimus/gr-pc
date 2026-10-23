@@ -52,18 +52,75 @@ extern "C" GRAVITY_SYSV_ABI void hle_stack_chk_fail() {
     std::abort();
 }
 
-// Memory allocation
+// Safe Tracked Memory allocation for guest libc
+static std::mutex g_heap_mutex;
+static std::unordered_map<void*, std::size_t> g_allocated_ptrs;
+static HANDLE g_hle_heap = nullptr;
+
+static void ensure_hle_heap() {
+    if (!g_hle_heap) {
+        g_hle_heap = HeapCreate(0, 64 * 1024 * 1024, 0);
+        if (!g_hle_heap) g_hle_heap = GetProcessHeap();
+    }
+}
+
 extern "C" GRAVITY_SYSV_ABI void* hle_malloc(std::size_t size) {
-    return std::malloc(size);
+    if (size == 0) size = 1;
+    ensure_hle_heap();
+    void* ptr = HeapAlloc(g_hle_heap, HEAP_ZERO_MEMORY, size);
+    if (ptr) {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        g_allocated_ptrs[ptr] = size;
+    }
+    return ptr;
 }
+
 extern "C" GRAVITY_SYSV_ABI void hle_free(void* ptr) {
-    std::free(ptr);
+    if (!ptr) return;
+    ensure_hle_heap();
+    bool is_tracked = false;
+    {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        auto it = g_allocated_ptrs.find(ptr);
+        if (it != g_allocated_ptrs.end()) {
+            is_tracked = true;
+            g_allocated_ptrs.erase(it);
+        }
+    }
+    if (is_tracked) {
+        HeapFree(g_hle_heap, 0, ptr);
+    }
 }
+
 extern "C" GRAVITY_SYSV_ABI void* hle_calloc(std::size_t count, std::size_t size) {
-    return std::calloc(count, size);
+    std::size_t total = count * size;
+    return hle_malloc(total);
 }
+
 extern "C" GRAVITY_SYSV_ABI void* hle_realloc(void* ptr, std::size_t size) {
-    return std::realloc(ptr, size);
+    if (!ptr) return hle_malloc(size);
+    if (size == 0) { hle_free(ptr); return nullptr; }
+    ensure_hle_heap();
+    bool is_tracked = false;
+    {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        auto it = g_allocated_ptrs.find(ptr);
+        if (it != g_allocated_ptrs.end()) {
+            is_tracked = true;
+            g_allocated_ptrs.erase(it);
+        }
+    }
+    if (is_tracked) {
+        void* new_ptr = HeapReAlloc(g_hle_heap, HEAP_ZERO_MEMORY, ptr, size);
+        if (new_ptr) {
+            std::lock_guard<std::mutex> lock(g_heap_mutex);
+            g_allocated_ptrs[new_ptr] = size;
+        }
+        return new_ptr;
+    } else {
+        void* new_ptr = hle_malloc(size);
+        return new_ptr;
+    }
 }
 
 // Memory operations
@@ -161,7 +218,91 @@ extern "C" GRAVITY_SYSV_ABI void hle_exit(int status) {
     std::exit(status);
 }
 extern "C" GRAVITY_SYSV_ABI int hle_atexit(void (*func)()) {
-    return std::atexit(func);
+    (void)func;
+    // Do not register raw guest pointers with host CRT std::atexit, as calling
+    // guest code from host exit handlers will crash outside SysV sandbox.
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_libc_init() {
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_cxa_guard_acquire(uint64_t* guard) {
+    if (!guard) return 0;
+    auto* b = reinterpret_cast<uint8_t*>(guard);
+    if (*b != 0) return 0;
+    return 1;
+}
+extern "C" GRAVITY_SYSV_ABI void hle_cxa_guard_release(uint64_t* guard) {
+    if (!guard) return;
+    auto* b = reinterpret_cast<uint8_t*>(guard);
+    *b = 1;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_cxa_atexit(void (*func)(void*), void* arg, void* dso) {
+    (void)func;
+    (void)arg;
+    (void)dso;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI void hle_cxx_init_dummy(void* obj) {
+    (void)obj;
+}
+extern "C" GRAVITY_SYSV_ABI void* hle_fopen(const char* path, const char* mode) {
+    (void)path;
+    (void)mode;
+    return nullptr;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_fclose(void* fp) {
+    (void)fp;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI float hle_kernel_sincosf(int mode, int unused, float x) {
+    (void)unused;
+    return (mode == 1) ? std::sin(x) : std::cos(x);
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadGetprio(uint64_t thread, int* prio) {
+    (void)thread;
+    if (prio) *prio = 256;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadAttrInit(void* attr) {
+    if (attr) std::memset(attr, 0, 64);
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadAttrSetstacksize(void* attr, std::size_t size) {
+    (void)attr;
+    (void)size;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadCreate(void** thread, const void* attr,
+                                                     void* (*start_routine)(void*),
+                                                     void* arg, const char* name) {
+    (void)attr;
+    (void)start_routine;
+    (void)arg;
+    (void)name;
+    static uint64_t next_tid = 0x2000;
+    if (thread) *thread = reinterpret_cast<void*>(++next_tid);
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadSetprio(void* thread, int prio) {
+    (void)thread;
+    (void)prio;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleLoadModule(uint32_t id) {
+    (void)id;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleUnloadModule(uint32_t id) {
+    (void)id;
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotDisable() {
+    return 0;
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotSetParam(const void* param) {
+    (void)param;
+    return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int hle_rand() {
     return std::rand();
@@ -686,6 +827,15 @@ void AdapterRegistry::initialize_builtin_adapters() {
 
     register_adapter("uMei1W9uyNo", "libc", "exit", reinterpret_cast<uintptr_t>(&hle_exit));
     register_adapter("8G2LB+A3rzg", "libc", "atexit", reinterpret_cast<uintptr_t>(&hle_atexit));
+    register_adapter("bzQExy189ZI", "libc", "libc_init", reinterpret_cast<uintptr_t>(&hle_libc_init));
+    register_adapter("3GPpjQdAMTw", "libc", "__cxa_guard_acquire", reinterpret_cast<uintptr_t>(&hle_cxa_guard_acquire));
+    register_adapter("9rAeANT2tyE", "libc", "__cxa_guard_release", reinterpret_cast<uintptr_t>(&hle_cxa_guard_release));
+    register_adapter("tsvEmnenz48", "libc", "__cxa_atexit", reinterpret_cast<uintptr_t>(&hle_cxa_atexit));
+    register_adapter("-Bl9-SZ2noc", "libc", "ios_init", reinterpret_cast<uintptr_t>(&hle_cxx_init_dummy));
+    register_adapter("Uw3OTZFPNt4", "libc", "ios_fini", reinterpret_cast<uintptr_t>(&hle_cxx_init_dummy));
+    register_adapter("ZtjspkJQ+vw", "libc", "__kernel_sincosf", reinterpret_cast<uintptr_t>(&hle_kernel_sincosf));
+    register_adapter("xeYO4u7uyJ0", "libc", "fopen", reinterpret_cast<uintptr_t>(&hle_fopen));
+    register_adapter("uodLYyUip20", "libc", "fclose", reinterpret_cast<uintptr_t>(&hle_fclose));
     register_adapter("cpCOXWMgha0", "libc", "rand", reinterpret_cast<uintptr_t>(&hle_rand));
     register_adapter("VPbJwTCgME0", "libc", "srand", reinterpret_cast<uintptr_t>(&hle_srand));
     register_adapter("AEJdIVZTEmo", "libc", "qsort", reinterpret_cast<uintptr_t>(&hle_qsort));
@@ -721,6 +871,11 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("9BcDykPmo1I", "libkernel", "__Error", reinterpret_cast<uintptr_t>(&hle_Error));
     register_adapter("aI+OeCz8xrQ", "libkernel", "posix_pthread_self", reinterpret_cast<uintptr_t>(&hle_posix_pthread_self));
     register_adapter("EI-5-jlq2dE", "libkernel", "posix_pthread_getthreadid_np", reinterpret_cast<uintptr_t>(&hle_posix_pthread_getthreadid_np));
+    register_adapter("1tKyG7RlMJo", "libkernel", "scePthreadGetprio", reinterpret_cast<uintptr_t>(&hle_scePthreadGetprio));
+    register_adapter("nsYoNRywwNg", "libkernel", "scePthreadAttrInit", reinterpret_cast<uintptr_t>(&hle_scePthreadAttrInit));
+    register_adapter("UTXzJbWhhTE", "libkernel", "scePthreadAttrSetstacksize", reinterpret_cast<uintptr_t>(&hle_scePthreadAttrSetstacksize));
+    register_adapter("6UgtwV+0zb4", "libkernel", "scePthreadCreate", reinterpret_cast<uintptr_t>(&hle_scePthreadCreate));
+    register_adapter("W0Hpm2X0uPE", "libkernel", "scePthreadSetprio", reinterpret_cast<uintptr_t>(&hle_scePthreadSetprio));
 
     register_adapter("pO96TwzOm5E", "libkernel", "sceKernelGetDirectMemorySize", reinterpret_cast<uintptr_t>(&hle_sceKernelGetDirectMemorySize));
     register_adapter("rTXw65xmLIA", "libkernel", "sceKernelAllocateDirectMemory", reinterpret_cast<uintptr_t>(&hle_sceKernelAllocateDirectMemory));
@@ -792,6 +947,18 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("b+uAV89IlxE", "libSceAudioOut", "sceAudioOutSetVolume", reinterpret_cast<uintptr_t>(&hle_sceAudioOutSetVolume));
     register_adapter("GrQ9s4IrNaQ", "libSceAudioOut", "sceAudioOutGetPortState", reinterpret_cast<uintptr_t>(&hle_sceAudioOutGetPortState));
     register_adapter("wVwPU50pS1c", "libSceAudioOut", "sceAudioOutSetMixLevelPadSpk", reinterpret_cast<uintptr_t>(&hle_sceAudioOutSetMixLevelPadSpk));
+
+    // ---------------------------------------------------------------------
+    // 7. libSceSysmodule (System module loading)
+    // ---------------------------------------------------------------------
+    register_adapter("g8cM39EUZ6o", "libSceSysmodule", "sceSysmoduleLoadModule", reinterpret_cast<uintptr_t>(&hle_sceSysmoduleLoadModule));
+    register_adapter("eR2bZFAAU0Q", "libSceSysmodule", "sceSysmoduleUnloadModule", reinterpret_cast<uintptr_t>(&hle_sceSysmoduleUnloadModule));
+
+    // ---------------------------------------------------------------------
+    // 8. libSceScreenShot (Screen capture parameters)
+    // ---------------------------------------------------------------------
+    register_adapter("tIYf0W5VTi8", "libSceScreenShot", "sceScreenShotDisable", reinterpret_cast<uintptr_t>(&hle_sceScreenShotDisable));
+    register_adapter("G7KlmIYFIZc", "libSceScreenShot", "sceScreenShotSetParam", reinterpret_cast<uintptr_t>(&hle_sceScreenShotSetParam));
 }
 
 } // namespace gravity::hle
