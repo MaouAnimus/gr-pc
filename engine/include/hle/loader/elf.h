@@ -26,12 +26,14 @@ LoadResult load_self(const void* file_image,
                      std::size_t file_size,
                      gravity::memory::AddressSpace& as,
                      std::uintptr_t guest_base = 0x1000000000ULL,
-                     bool inspection = false);
+                     bool inspection = false,
+                     bool bind_unresolved_traps = false);
 
 // Legacy / convenience wrapper
 LoadResult load_elf(const void* file_image,
                     std::size_t file_size,
                     std::uintptr_t guest_base = 0x1000000000ULL,
-                    bool inspection = false);
+                    bool inspection = false,
+                    bool bind_unresolved_traps = false);
 
 } // namespace gravity::hle::loader

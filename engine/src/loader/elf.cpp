@@ -32,7 +32,7 @@ template<class T> T read(const std::uint8_t* raw, std::size_t off) {
 
 LoadResult load_self(const void* image, std::size_t size,
                     gravity::memory::AddressSpace& as, std::uintptr_t guest_base,
-                    bool inspection) {
+                    bool inspection, bool bind_unresolved_traps) {
     LoadResult result{};
     auto fail = [&](const char* message) { result.error = message; return result; };
     if (!image || size < sizeof(Ehdr)) return fail("Truncated executable header");
@@ -178,7 +178,7 @@ LoadResult load_self(const void* image, std::size_t size,
     }
     RelocationReport report;
     if (dynamic && apply_orbis_relocations(raw + dynlib, dynlib_size, base, total,
-                                           layout, ranges, report, inspection) < 0) {
+                                           layout, ranges, report, inspection, bind_unresolved_traps) < 0) {
         result.unresolved_symbols = std::move(report.unresolved);
         return fail("Invalid relocation or unresolved import (strict mode)");
     }
@@ -195,9 +195,9 @@ LoadResult load_self(const void* image, std::size_t size,
     rollback.done = true;
     return result;
 }
-LoadResult load_elf(const void* image, std::size_t size, std::uintptr_t base, bool inspection) {
+LoadResult load_elf(const void* image, std::size_t size, std::uintptr_t base, bool inspection, bool bind_unresolved_traps) {
     static memory::AddressSpace space;
-    return load_self(image, size, space, base, inspection);
+    return load_self(image, size, space, base, inspection, bind_unresolved_traps);
 }
 }
 

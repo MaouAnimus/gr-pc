@@ -21,7 +21,8 @@ add_library(gravity_runtime STATIC
     engine/src/audio/audio.cpp
     engine/src/gnm/gnm.cpp
     engine/src/video.cpp
-    engine/src/runner/runner.cpp)
+    engine/src/runner/runner.cpp
+    engine/src/registry/adapter_registry.cpp)
 target_include_directories(gravity_runtime PUBLIC engine/include)
 target_compile_features(gravity_runtime PUBLIC cxx_std_23)
 target_compile_definitions(gravity_runtime PUBLIC
@@ -82,5 +83,14 @@ if(BUILD_TESTING)
     foreach(suite layout lifecycle stack tls concurrent)
         add_test(NAME fiber_tls_${suite} COMMAND fiber_tls_tests ${suite})
         set_tests_properties(fiber_tls_${suite} PROPERTIES TIMEOUT 15)
+    endforeach()
+
+    # N07: Typed Adapter Registry & Unresolved Traps
+    add_executable(registry_tests tests/registry_tests.cpp)
+    target_link_libraries(registry_tests PRIVATE gravity_runtime)
+    target_compile_options(registry_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lookup execution trap)
+        add_test(NAME registry_${suite} COMMAND registry_tests ${suite})
+        set_tests_properties(registry_${suite} PROPERTIES TIMEOUT 10)
     endforeach()
 endif()

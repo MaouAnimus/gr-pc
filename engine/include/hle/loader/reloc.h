@@ -28,7 +28,8 @@ std::int64_t apply_orbis_relocations(
     const RelocationLayout& layout,
     std::span<const MemoryRange> mapped,
     RelocationReport& report,
-    bool inspection = false);
+    bool inspection = false,
+    bool bind_unresolved_traps = false);
 
 // Legacy interface for backwards compatibility
 bool apply_relocations(const std::uint8_t* elf_image,

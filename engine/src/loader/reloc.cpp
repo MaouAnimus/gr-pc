@@ -1,5 +1,6 @@
 #include "hle/loader/reloc.h"
 #include "hle/abi.h"
+#include "hle/registry/adapter_registry.h"
 #include <Windows.h>
 #include <cstring>
 #include <cstdlib>
@@ -8,9 +9,6 @@
 #include <iostream>
 #include <algorithm>
 #include <limits>
-
-#include <cstdio>
-#include <cstdarg>
 
 namespace gravity::hle::loader {
 
@@ -36,81 +34,16 @@ constexpr std::uint32_t R_X86_64_GLOB_DAT = 6;
 constexpr std::uint32_t R_X86_64_JUMP_SLOT= 7;
 constexpr std::uint32_t R_X86_64_RELATIVE = 8;
 
-extern "C" GRAVITY_SYSV_ABI void* hle_malloc(std::size_t size) {
-    return std::malloc(size);
-}
-
-extern "C" GRAVITY_SYSV_ABI void hle_free(void* ptr) {
-    std::free(ptr);
-}
-
-extern "C" GRAVITY_SYSV_ABI void* hle_calloc(std::size_t num, std::size_t size) {
-    return std::calloc(num, size);
-}
-
-extern "C" GRAVITY_SYSV_ABI void* hle_realloc(void* ptr, std::size_t size) {
-    return std::realloc(ptr, size);
-}
-
-extern "C" GRAVITY_SYSV_ABI void* hle_memcpy(void* dest, const void* src, std::size_t n) {
-    return std::memcpy(dest, src, n);
-}
-
-extern "C" GRAVITY_SYSV_ABI void* hle_memset(void* s, int c, std::size_t n) {
-    return std::memset(s, c, n);
-}
-
-extern "C" GRAVITY_SYSV_ABI int hle_memcmp(const void* s1, const void* s2, std::size_t n) {
-    return std::memcmp(s1, s2, n);
-}
-
-extern "C" GRAVITY_SYSV_ABI std::size_t hle_strlen(const char* s) {
-    return std::strlen(s);
-}
-
-extern "C" GRAVITY_SYSV_ABI char* hle_strcpy(char* dest, const char* src) {
-    return std::strcpy(dest, src);
-}
-
-extern "C" GRAVITY_SYSV_ABI char* hle_strncpy(char* dest, const char* src, std::size_t n) {
-    return std::strncpy(dest, src, n);
-}
-
-extern "C" GRAVITY_SYSV_ABI int hle_strcmp(const char* s1, const char* s2) {
-    return std::strcmp(s1, s2);
-}
-
-extern "C" GRAVITY_SYSV_ABI int hle_strncmp(const char* s1, const char* s2, std::size_t n) {
-    return std::strncmp(s1, s2, n);
-}
-
-std::uintptr_t resolve_symbol_by_name(std::string_view name) noexcept {
-    name = name.substr(0, name.find('#'));
-    // Only implemented imports are eligible for resolution.
-    if (name == "gQX+4GDQjpM") return reinterpret_cast<std::uintptr_t>(&hle_malloc);
-    if (name == "rcQCUr0EaRU") return reinterpret_cast<std::uintptr_t>(&hle_free);
-    if (name == "uMei1W9uyNo") return reinterpret_cast<std::uintptr_t>(&hle_calloc);
-    if (name == "sqWytnhYdEg") return reinterpret_cast<std::uintptr_t>(&hle_realloc);
-    if (name == "hqi8yMOCmG0") return reinterpret_cast<std::uintptr_t>(&hle_memcpy);
-    if (name == "N2f485TmJms") return reinterpret_cast<std::uintptr_t>(&hle_memset);
-    if (name == "-L+-8F0+gBc") return reinterpret_cast<std::uintptr_t>(&hle_memcmp);
-    if (name == "LTov9gMEqCU") return reinterpret_cast<std::uintptr_t>(&hle_strlen);
-    if (name == "FQ9NFbBHb5Y") return reinterpret_cast<std::uintptr_t>(&hle_strcpy);
-    if (name == "8u8lPzUEq+U") return reinterpret_cast<std::uintptr_t>(&hle_strncpy);
-    if (name == "KuOuD58hqn4") return reinterpret_cast<std::uintptr_t>(&hle_strcmp);
-    if (name == "Av3zjWi64Kw") return reinterpret_cast<std::uintptr_t>(&hle_strncmp);
-    return 0; // Unsupported imports must remain visible.
-}
-
 } // anonymous namespace
-
 
 std::int64_t apply_orbis_relocations(
     const std::uint8_t* data, std::size_t size, std::uintptr_t base,
     std::size_t memory_size, const RelocationLayout& layout,
-    std::span<const MemoryRange> mapped, RelocationReport& report, bool inspection)
+    std::span<const MemoryRange> mapped, RelocationReport& report,
+    bool inspection, bool bind_unresolved_traps)
 {
     report = {};
+    AdapterRegistry::instance().set_guest_base(base);
     auto within = [](std::uint64_t off, std::uint64_t len, std::uint64_t limit) {
         return off <= limit && len <= limit - off;
     };
@@ -168,13 +101,29 @@ std::int64_t apply_orbis_relocations(
                     const auto* end = static_cast<const char*>(std::memchr(name, 0, layout.strings_size - sym.st_name));
                     if (!end) return -1;
                     const std::string_view view(name, end - name);
-                    value = resolve_symbol_by_name(view);
+                    std::string_view nid = view.substr(0, view.find('#'));
+                    std::string_view lib_name = {};
+                    auto first_hash = view.find('#');
+                    if (first_hash != std::string_view::npos) {
+                        auto second_hash = view.find('#', first_hash + 1);
+                        if (second_hash != std::string_view::npos) {
+                            lib_name = view.substr(first_hash + 1, second_hash - first_hash - 1);
+                        } else {
+                            lib_name = view.substr(first_hash + 1);
+                        }
+                    }
+
+                    value = AdapterRegistry::instance().resolve(nid, lib_name);
                     if (!value) {
                         if (std::find(report.unresolved.begin(), report.unresolved.end(), view) == report.unresolved.end())
                             report.unresolved.emplace_back(view);
-                        // Inspection leaves unresolved slots null, never an executable success stub.
-                        writes.push_back({base + rel.r_offset, 0});
-                        continue;
+                        if (bind_unresolved_traps) {
+                            value = AdapterRegistry::instance().get_unresolved_thunk(nid, lib_name);
+                        } else {
+                            // Inspection leaves unresolved slots null, never an executable success stub.
+                            writes.push_back({base + rel.r_offset, 0});
+                            continue;
+                        }
                     }
                 }
                 value += static_cast<std::uint64_t>(rel.r_addend);
