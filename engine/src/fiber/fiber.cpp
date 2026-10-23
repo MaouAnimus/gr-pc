@@ -4,47 +4,125 @@
 #include <cstring>
 #include <algorithm>
 #include <new>
+#include <mutex>
 
 namespace gravity::hle {
 
-static uint8_t* g_tls_template = nullptr;
-static uint64_t g_tls_template_size = 0;
+// -------------------------------------------------------------------------
+// FiberRegistry implementation (External thread-safe map)
+// -------------------------------------------------------------------------
+
+FiberRegistry& FiberRegistry::instance() noexcept {
+    static FiberRegistry instance;
+    return instance;
+}
+
+void FiberRegistry::register_fiber(const orbis::SceFiber* guest, std::unique_ptr<Fiber> host) noexcept {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    map_[guest] = std::move(host);
+}
+
+Fiber* FiberRegistry::get(const orbis::SceFiber* guest) const noexcept {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto it = map_.find(guest);
+    if (it != map_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+std::unique_ptr<Fiber> FiberRegistry::unregister_fiber(const orbis::SceFiber* guest) noexcept {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto it = map_.find(guest);
+    if (it != map_.end()) {
+        auto host = std::move(it->second);
+        map_.erase(it);
+        return host;
+    }
+    return nullptr;
+}
+
+std::size_t FiberRegistry::count() const noexcept {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    return map_.size();
+}
+
+void FiberRegistry::clear() noexcept {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    map_.clear();
+}
+
+// -------------------------------------------------------------------------
+// ThreadTls implementation (Per-thread guest TLS)
+// -------------------------------------------------------------------------
+
+static DWORD g_thread_tls_slot = TLS_OUT_OF_INDEXES;
+static std::once_flag g_thread_tls_slot_once;
+
+void ThreadTls::initialize() noexcept {
+    std::call_once(g_thread_tls_slot_once, []() {
+        if (g_thread_tls_slot == TLS_OUT_OF_INDEXES) {
+            g_thread_tls_slot = TlsAlloc();
+        }
+    });
+}
+
+void ThreadTls::set_current_thread_tls(void* tls_ptr) noexcept {
+    initialize();
+    if (g_thread_tls_slot != TLS_OUT_OF_INDEXES) {
+        TlsSetValue(g_thread_tls_slot, tls_ptr);
+    }
+}
+
+void* ThreadTls::get_current_thread_tls() noexcept {
+    initialize();
+    if (g_thread_tls_slot != TLS_OUT_OF_INDEXES) {
+        return TlsGetValue(g_thread_tls_slot);
+    }
+    return nullptr;
+}
+
+DWORD ThreadTls::get_thread_tls_slot() noexcept {
+    initialize();
+    return g_thread_tls_slot;
+}
+
+// -------------------------------------------------------------------------
+// Fiber TLS template and slot
+// -------------------------------------------------------------------------
+
+static std::mutex g_tls_template_mutex;
+static std::vector<uint8_t> g_tls_template;
 static uint64_t g_tls_total_size = 0;
 static DWORD g_tls_slot = TLS_OUT_OF_INDEXES;
+static std::once_flag g_tls_slot_once;
 
 static thread_local FiberScheduler* s_current_scheduler = nullptr;
 
 extern "C" GRAVITY_SYSV_ABI void
 sceFiberSetTlsTemplate(const uint8_t* data, uint64_t template_size, uint64_t total_size) {
-    if (g_tls_template) {
-        std::free(g_tls_template);
-        g_tls_template = nullptr;
-    }
+    sceFiberInitTlsSlot();
+    std::lock_guard<std::mutex> lock(g_tls_template_mutex);
     if (data && template_size > 0) {
-        g_tls_template = static_cast<uint8_t*>(std::malloc(template_size));
-        if (g_tls_template) {
-            std::memcpy(g_tls_template, data, template_size);
-            g_tls_template_size = template_size;
-            g_tls_total_size = total_size;
-        } else {
-            g_tls_template_size = 0;
-            g_tls_total_size = 0;
-        }
+        g_tls_template.assign(data, data + template_size);
     } else {
-        g_tls_template_size = 0;
-        g_tls_total_size = total_size;
+        g_tls_template.clear();
     }
+    g_tls_total_size = total_size;
 }
 
 extern "C" GRAVITY_SYSV_ABI void
 sceFiberInitTlsSlot() {
-    if (g_tls_slot == TLS_OUT_OF_INDEXES) {
-        g_tls_slot = TlsAlloc();
-    }
+    std::call_once(g_tls_slot_once, []() {
+        if (g_tls_slot == TLS_OUT_OF_INDEXES) {
+            g_tls_slot = TlsAlloc();
+        }
+    });
 }
 
 extern "C" GRAVITY_SYSV_ABI DWORD
 sceFiberGetTlsSlot() {
+    sceFiberInitTlsSlot();
     return g_tls_slot;
 }
 
@@ -137,9 +215,9 @@ Status FiberScheduler::run(Fiber& target, std::uint64_t argument, std::uint64_t&
     target.state_ = FiberState::running;
     current_ = &target;
 
-    target.syncGuestToInternal();
-    if (g_tls_slot != TLS_OUT_OF_INDEXES) {
-        TlsSetValue(g_tls_slot, target.tls_block.empty() ? nullptr : target.tls_block.data());
+    DWORD slot = sceFiberGetTlsSlot();
+    if (slot != TLS_OUT_OF_INDEXES) {
+        TlsSetValue(slot, target.tls_block_ptr());
     }
 
     SwitchToFiber(target.handle_);
@@ -169,15 +247,14 @@ Status FiberScheduler::switch_to(Fiber& target, std::uint64_t argument, std::uin
 
     Fiber* prev = current_;
     prev->state_ = FiberState::suspended;
-    prev->syncInternalToGuest();
 
     target.incoming_ = argument;
     target.state_ = FiberState::running;
     current_ = &target;
 
-    target.syncGuestToInternal();
-    if (g_tls_slot != TLS_OUT_OF_INDEXES) {
-        TlsSetValue(g_tls_slot, target.tls_block.empty() ? nullptr : target.tls_block.data());
+    DWORD slot = sceFiberGetTlsSlot();
+    if (slot != TLS_OUT_OF_INDEXES) {
+        TlsSetValue(slot, target.tls_block_ptr());
     }
 
     SwitchToFiber(target.handle_);
@@ -195,10 +272,14 @@ Status FiberScheduler::return_to_thread(std::uint64_t argument, std::uint64_t& r
 
     Fiber* fib = current_;
     fib->state_ = FiberState::suspended;
-    fib->syncInternalToGuest();
 
     return_value_ = argument;
     current_ = nullptr;
+
+    DWORD slot = sceFiberGetTlsSlot();
+    if (slot != TLS_OUT_OF_INDEXES) {
+        TlsSetValue(slot, nullptr);
+    }
 
     SwitchToFiber(root_fiber_);
 
@@ -209,21 +290,6 @@ Status FiberScheduler::return_to_thread(std::uint64_t argument, std::uint64_t& r
 // -------------------------------------------------------------------------
 // Fiber implementation
 // -------------------------------------------------------------------------
-
-void Fiber::syncGuestToInternal() noexcept {
-    if (guest_stack_base && guest_stack_size > 0) {
-        if (guest_stack_shadow.size() < guest_stack_size) {
-            guest_stack_shadow.resize(guest_stack_size);
-        }
-        std::memcpy(guest_stack_shadow.data(), guest_stack_base, guest_stack_size);
-    }
-}
-
-void Fiber::syncInternalToGuest() noexcept {
-    if (guest_stack_base && guest_stack_size > 0 && !guest_stack_shadow.empty()) {
-        std::memcpy(guest_stack_base, guest_stack_shadow.data(), std::min(guest_stack_size, guest_stack_shadow.size()));
-    }
-}
 
 void WINAPI Fiber::trampoline(void* parameter) noexcept {
     auto* fiber = static_cast<Fiber*>(parameter);
@@ -242,7 +308,10 @@ void WINAPI Fiber::trampoline(void* parameter) noexcept {
         scheduler->return_value_ = 0;
     }
 
-    fiber->syncInternalToGuest();
+    DWORD slot = sceFiberGetTlsSlot();
+    if (slot != TLS_OUT_OF_INDEXES) {
+        TlsSetValue(slot, nullptr);
+    }
     scheduler->current_ = nullptr;
     SwitchToFiber(scheduler->root_fiber_);
 }
@@ -285,21 +354,17 @@ Status Fiber::initialize(FiberScheduler& scheduler, FiberEntry entry,
     state_ = FiberState::ready;
     ++scheduler_->live_fibers_;
 
-    if (g_tls_template && g_tls_total_size > 0) {
-        tls_block.resize(static_cast<std::size_t>(g_tls_total_size), 0);
-        if (g_tls_template_size > 0) {
-            std::memcpy(tls_block.data(), g_tls_template,
-                        std::min<std::size_t>(static_cast<std::size_t>(g_tls_template_size),
-                                              static_cast<std::size_t>(g_tls_total_size)));
+    {
+        std::lock_guard<std::mutex> lock(g_tls_template_mutex);
+        if (g_tls_total_size > 0) {
+            tls_block.resize(static_cast<std::size_t>(g_tls_total_size), 0);
+            if (!g_tls_template.empty()) {
+                std::memcpy(tls_block.data(), g_tls_template.data(),
+                            std::min<std::size_t>(g_tls_template.size(), tls_block.size()));
+            }
+        } else {
+            tls_block.clear();
         }
-    } else {
-        tls_block.clear();
-    }
-
-    if (guest_stack_base && guest_stack_size > 0) {
-        guest_stack_shadow.resize(guest_stack_size, 0);
-    } else {
-        guest_stack_shadow.clear();
     }
 
     return {};
@@ -325,7 +390,6 @@ Status Fiber::finalize() noexcept {
     exception_ = nullptr;
     guest_stack_base = nullptr;
     guest_stack_size = 0;
-    guest_stack_shadow.clear();
     tls_block.clear();
     return {};
 }
@@ -343,45 +407,51 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberInitialize(
     std::size_t stack_size,
     const orbis::SceFiberOptParam* optParam
 ) {
-    (void)optParam;
+    sceFiberInitTlsSlot();
     if (!fiber || !entry) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
+    // Prevent double initialization
+    if (fiber->magic_start == orbis::ORBIS_FIBER_MAGIC_START &&
+        fiber->magic_end == orbis::ORBIS_FIBER_MAGIC_END) {
+        return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
+    }
+
     auto* scheduler = FiberScheduler::for_thread();
     if (!scheduler) {
         return static_cast<int32_t>(orbis::Error::FIBER_ENORES);
     }
 
-    auto* host = new (std::nothrow) Fiber();
-    if (!host) {
-        return static_cast<int32_t>(orbis::Error::KERNEL_ENOMEM);
-    }
-
+    auto host = std::make_unique<Fiber>();
     host->guest_stack_base = stack_base;
     host->guest_stack_size = stack_size;
-    if (stack_base && stack_size > 0) {
-        host->guest_stack_shadow.resize(stack_size, 0);
-    }
 
     auto status = host->initialize(*scheduler, entry, arg);
     if (!status) {
-        delete host;
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
 
-    fiber->attr = 0;
+    fiber->magic_start = orbis::ORBIS_FIBER_MAGIC_START;
+    fiber->state = static_cast<uint32_t>(orbis::FiberState::ready);
     fiber->entry = reinterpret_cast<void*>(entry);
-    fiber->arg = arg;
-    fiber->stack_base = stack_base;
-    fiber->stack_size = stack_size;
+    fiber->arg_on_initialize = arg;
+    fiber->addr_context = stack_base;
+    fiber->size_context = stack_size;
     if (name) {
         std::strncpy(fiber->name, name, sizeof(fiber->name) - 1);
         fiber->name[sizeof(fiber->name) - 1] = '\0';
     } else {
         fiber->name[0] = '\0';
     }
-    fiber->host_fiber = host;
+    fiber->context = nullptr;
+    fiber->flags = optParam ? optParam->attr : 0;
+    fiber->reserved = 0;
+    fiber->context_start = stack_base;
+    fiber->context_end = static_cast<char*>(stack_base) + stack_size;
+    fiber->magic_end = orbis::ORBIS_FIBER_MAGIC_END;
+    fiber->padding_end = 0;
 
+    FiberRegistry::instance().register_fiber(fiber, std::move(host));
     return static_cast<int32_t>(orbis::Error::OK);
 }
 
@@ -390,20 +460,32 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberRun(
     uint64_t arg,
     uint64_t* pReturnedArg
 ) {
-    if (!fiber || !fiber->host_fiber) {
+    if (!fiber || fiber->magic_start != orbis::ORBIS_FIBER_MAGIC_START ||
+        fiber->magic_end != orbis::ORBIS_FIBER_MAGIC_END) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
-    auto* host = static_cast<Fiber*>(fiber->host_fiber);
+    auto* host = FiberRegistry::instance().get(fiber);
+    if (!host) {
+        return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
+    }
     auto* scheduler = FiberScheduler::for_thread();
     if (!scheduler) {
         return static_cast<int32_t>(orbis::Error::FIBER_ENORES);
     }
 
+    fiber->state = static_cast<uint32_t>(orbis::FiberState::running);
     uint64_t returned = 0;
     auto status = scheduler->run(*host, arg, returned);
     if (!status) {
+        fiber->state = static_cast<uint32_t>(orbis::FiberState::suspended);
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
+    if (host->state() == FiberState::completed) {
+        fiber->state = static_cast<uint32_t>(orbis::FiberState::completed);
+    } else {
+        fiber->state = static_cast<uint32_t>(orbis::FiberState::suspended);
+    }
+
     if (pReturnedArg) {
         *pReturnedArg = returned;
     }
@@ -415,19 +497,29 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberSwitch(
     uint64_t run_arg,
     uint64_t* out_arg
 ) {
-    if (!to_fiber || !to_fiber->host_fiber) {
+    if (!to_fiber || to_fiber->magic_start != orbis::ORBIS_FIBER_MAGIC_START ||
+        to_fiber->magic_end != orbis::ORBIS_FIBER_MAGIC_END) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
-    auto* host = static_cast<Fiber*>(to_fiber->host_fiber);
+    auto* host = FiberRegistry::instance().get(to_fiber);
+    if (!host) {
+        return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
+    }
     auto* scheduler = FiberScheduler::for_thread();
     if (!scheduler) {
         return static_cast<int32_t>(orbis::Error::FIBER_ENORES);
     }
 
+    to_fiber->state = static_cast<uint32_t>(orbis::FiberState::running);
     uint64_t resumed = 0;
     auto status = scheduler->switch_to(*host, run_arg, resumed);
     if (!status) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
+    }
+    if (host->state() == FiberState::completed) {
+        to_fiber->state = static_cast<uint32_t>(orbis::FiberState::completed);
+    } else {
+        to_fiber->state = static_cast<uint32_t>(orbis::FiberState::suspended);
     }
     if (out_arg) {
         *out_arg = resumed;
@@ -462,13 +554,18 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberReturn() {
 extern "C" GRAVITY_SYSV_ABI int32_t sceFiberFinalize(
     orbis::SceFiber* fiber
 ) {
-    if (!fiber || !fiber->host_fiber) {
+    if (!fiber || fiber->magic_start != orbis::ORBIS_FIBER_MAGIC_START ||
+        fiber->magic_end != orbis::ORBIS_FIBER_MAGIC_END) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
-    auto* host = static_cast<Fiber*>(fiber->host_fiber);
+    auto host = FiberRegistry::instance().unregister_fiber(fiber);
+    if (!host) {
+        return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
+    }
     auto status = host->finalize();
-    delete host;
-    fiber->host_fiber = nullptr;
+    fiber->magic_start = 0;
+    fiber->magic_end = 0;
+    fiber->state = static_cast<uint32_t>(orbis::FiberState::empty);
     if (!status) {
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }

@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <cstddef>
 #include <exception>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace gravity::hle {
@@ -36,14 +40,10 @@ public:
     [[nodiscard]] FiberState state() const noexcept { return state_; }
     [[nodiscard]] std::exception_ptr exception() const noexcept { return exception_; }
 
-    // Guest stack state (Orbis OS guest stack) & TLS block
+    // Guest stack context descriptor (Orbis OS guest stack bounds) & TLS block
     void* guest_stack_base{nullptr};
     std::size_t guest_stack_size{0};
-    std::vector<std::uint8_t> guest_stack_shadow{};
     std::vector<std::uint8_t> tls_block{};
-
-    void syncGuestToInternal() noexcept;
-    void syncInternalToGuest() noexcept;
 
     [[nodiscard]] void* tls_block_ptr() const noexcept {
         return tls_block.empty() ? nullptr : const_cast<std::uint8_t*>(tls_block.data());
@@ -95,6 +95,33 @@ private:
     std::size_t live_fibers_{0};
     bool attached_{false};
     bool owns_conversion_{false};
+};
+
+// Thread-safe registry mapping guest SceFiber to host Fiber instances
+class FiberRegistry {
+public:
+    static FiberRegistry& instance() noexcept;
+
+    void register_fiber(const orbis::SceFiber* guest, std::unique_ptr<Fiber> host) noexcept;
+    [[nodiscard]] Fiber* get(const orbis::SceFiber* guest) const noexcept;
+    std::unique_ptr<Fiber> unregister_fiber(const orbis::SceFiber* guest) noexcept;
+    [[nodiscard]] std::size_t count() const noexcept;
+    void clear() noexcept;
+
+private:
+    FiberRegistry() = default;
+    ~FiberRegistry() = default;
+    mutable std::shared_mutex mutex_{};
+    std::unordered_map<const orbis::SceFiber*, std::unique_ptr<Fiber>> map_{};
+};
+
+// Thread TLS manager for guest OS threads
+class ThreadTls {
+public:
+    static void initialize() noexcept;
+    static void set_current_thread_tls(void* tls_ptr) noexcept;
+    [[nodiscard]] static void* get_current_thread_tls() noexcept;
+    [[nodiscard]] static DWORD get_thread_tls_slot() noexcept;
 };
 
 // C ABI / Orbis HLE functions

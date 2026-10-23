@@ -74,4 +74,13 @@ if(BUILD_TESTING)
         add_test(NAME abi_matrix_${suite} COMMAND abi_matrix_tests ${suite})
         set_tests_properties(abi_matrix_${suite} PROPERTIES TIMEOUT 10)
     endforeach()
+
+    # N06: Fiber Layout, TLS and Stack Isolation tests
+    add_executable(fiber_tls_tests tests/fiber_tls_tests.cpp)
+    target_link_libraries(fiber_tls_tests PRIVATE gravity_runtime)
+    target_compile_options(fiber_tls_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite layout lifecycle stack tls concurrent)
+        add_test(NAME fiber_tls_${suite} COMMAND fiber_tls_tests ${suite})
+        set_tests_properties(fiber_tls_${suite} PROPERTIES TIMEOUT 15)
+    endforeach()
 endif()
