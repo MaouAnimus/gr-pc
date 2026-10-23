@@ -1,0 +1,143 @@
+{
+  "title": "Gravity Rush Remastered (CUSA01130) ELF Audit",
+  "file_size": 38295907,
+  "elf_offset": "0x120",
+  "machine": "0x3E",
+  "entry_point": "0x2F0",
+  "program_headers": [
+    {
+      "index": 0,
+      "type": "PT_LOAD",
+      "offset": "0x4000",
+      "vaddr": "0x0",
+      "filesz": "0x15E785C",
+      "memsz": "0x15E785C",
+      "flags": 5
+    },
+    {
+      "index": 1,
+      "type": "PT_LOAD",
+      "offset": "0x15EC000",
+      "vaddr": "0x15E8000",
+      "filesz": "0x790748",
+      "memsz": "0xDCF668",
+      "flags": 6
+    },
+    {
+      "index": 2,
+      "type": "PT_SCE_PROGLIBDATA",
+      "offset": "0x15EC000",
+      "vaddr": "0x15E8000",
+      "filesz": "0x40",
+      "memsz": "0x40",
+      "flags": 4
+    },
+    {
+      "index": 3,
+      "type": "PT_DYNAMIC",
+      "offset": "0x2475A48",
+      "vaddr": "0x0",
+      "filesz": "0xCD0",
+      "memsz": "0xCD0",
+      "flags": 6
+    },
+    {
+      "index": 4,
+      "type": "PT_INTERP",
+      "offset": "0x4000",
+      "vaddr": "0x0",
+      "filesz": "0x15",
+      "memsz": "0x15",
+      "flags": 4
+    },
+    {
+      "index": 5,
+      "type": "PT_TLS",
+      "offset": "0x15EC040",
+      "vaddr": "0x15E8040",
+      "filesz": "0x4",
+      "memsz": "0x140",
+      "flags": 4
+    },
+    {
+      "index": 6,
+      "type": "PT_EH_FRAME",
+      "offset": "0x15857E0",
+      "vaddr": "0x15817E0",
+      "filesz": "0x6607C",
+      "memsz": "0x6607C",
+      "flags": 4
+    },
+    {
+      "index": 7,
+      "type": "PT_SCE_DYNLIBDATA",
+      "offset": "0x1D7C780",
+      "vaddr": "0x0",
+      "filesz": "0x6F9F98",
+      "memsz": "0x0",
+      "flags": 4
+    },
+    {
+      "index": 8,
+      "type": "PT_SCE_COMMENT",
+      "offset": "0x2476720",
+      "vaddr": "0x0",
+      "filesz": "0x48",
+      "memsz": "0x0",
+      "flags": 0
+    },
+    {
+      "index": 9,
+      "type": "PT_SCE_VERSION",
+      "offset": "0x2476768",
+      "vaddr": "0x0",
+      "filesz": "0xE1B",
+      "memsz": "0x0",
+      "flags": 0
+    }
+  ],
+  "imported_prx": [
+    "libSceAudio3d.prx",
+    "libSceAudioOut.prx",
+    "libSceAvPlayer.prx",
+    "libSceCommonDialog.prx",
+    "libSceErrorDialog.prx",
+    "libSceFiber.prx",
+    "libSceFios2.prx",
+    "libSceGameCustomDataDialog.prx",
+    "libSceGnmDriver_padebug.prx",
+    "libSceHttp.prx",
+    "libSceInvitationDialog.prx",
+    "libSceMsgDialog.prx",
+    "libSceNet.prx",
+    "libSceNetCtl.prx",
+    "libSceNgs2.prx",
+    "libSceNpAuth.prx",
+    "libSceNpCommerce.prx",
+    "libSceNpCommon.prx",
+    "libSceNpManager.prx",
+    "libSceNpMatching2.prx",
+    "libSceNpProfileDialog.prx",
+    "libSceNpScoreRanking.prx",
+    "libSceNpSns.prx",
+    "libSceNpSnsFacebookDialog.prx",
+    "libSceNpTrophy.prx",
+    "libSceNpTus.prx",
+    "libSceNpUtility.prx",
+    "libSceNpWebApi.prx",
+    "libScePad.prx",
+    "libScePlayGo.prx",
+    "libSceRtc.prx",
+    "libSceSaveData.prx",
+    "libSceSaveDataDialog.prx",
+    "libSceScreenShot.prx",
+    "libSceSsl.prx",
+    "libSceSysmodule.prx",
+    "libSceSystemService.prx",
+    "libSceUserService.prx",
+    "libSceVideoOut.prx",
+    "libc.prx",
+    "libkernel.prx",
+    "module.prx"
+  ]
+}

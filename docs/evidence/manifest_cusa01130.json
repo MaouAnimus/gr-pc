@@ -1,0 +1,262 @@
+{
+  "manifest_version": "1.0",
+  "generated_at": "2026-10-23 08:13:05 UTC",
+  "game_metadata": {
+    "APP_TYPE": 1,
+    "APP_VER": "01.00",
+    "ATTRIBUTE": 2,
+    "ATTRIBUTE2": 0,
+    "CATEGORY": "gd",
+    "CONTENT_ID": "UP9000-CUSA01130_00-GRAVITYRUSHHD000",
+    "DEV_FLAG": 4,
+    "DOWNLOAD_DATA_SIZE": 0,
+    "FORMAT": "obs",
+    "PARENTAL_LEVEL": 5,
+    "PUBTOOLINFO": "c_date=20210311,sdk_ver=02000000,st_type=digital50,img0_l0_size=9537,img0_l1_size=0,img0_sc_ksize=51200,img0_pc_ksize=34304",
+    "PUBTOOLVER": 54001664,
+    "REMOTE_PLAY_KEY_ASSIGN": 4,
+    "SERVICE_ID_ADDCONT_ADD_1": "",
+    "SERVICE_ID_ADDCONT_ADD_2": "",
+    "SERVICE_ID_ADDCONT_ADD_3": "",
+    "SERVICE_ID_ADDCONT_ADD_4": "",
+    "SERVICE_ID_ADDCONT_ADD_5": "",
+    "SERVICE_ID_ADDCONT_ADD_6": "",
+    "SERVICE_ID_ADDCONT_ADD_7": "",
+    "SYSTEM_VER": 72351744,
+    "TITLE": "Gravity Rush™ Remastered",
+    "TITLE_ID": "CUSA01130",
+    "VERSION": "01.00"
+  },
+  "summary": {
+    "file_count": 45,
+    "total_bytes": 9874426520,
+    "total_gib": 9.196
+  },
+  "files": [
+    {
+      "path": "args.txt",
+      "size_bytes": 11,
+      "sha256": "1901895e80692563b60d13e2ecec351560a1a65a3b3a637ce6bd211ba238599c"
+    },
+    {
+      "path": "eboot.bin",
+      "size_bytes": 38295907,
+      "sha256": "7c0216e8ff7254d03141e98c2df2b69f4f2259d08f2fe2754c33c5a3f137033a"
+    },
+    {
+      "path": "sce_discmap.plt",
+      "size_bytes": 3288792,
+      "sha256": "d51d948f1654cd95b655205a2cd6564527b2cc63add8db1a9acaba168a3656b2"
+    },
+    {
+      "path": "arc/arc_0_ep_0_0.psarc",
+      "size_bytes": 804174127,
+      "sha256": "be6708f6e44487dc82532182748c872c035099205d88c8aa5536d94919781070"
+    },
+    {
+      "path": "arc/arc_0_ep_1_7.psarc",
+      "size_bytes": 1575361608,
+      "sha256": "fef900c1004b04d11a1224ff433472f5b2faf0dcfb76edb62b4d46b10d6517eb"
+    },
+    {
+      "path": "arc/arc_1_ep_8_11.psarc",
+      "size_bytes": 1200485037,
+      "sha256": "c79be0cd3d14e27b6f65b6c4d0b6ea288f4918228f6467a3db9ab476c3359ed3"
+    },
+    {
+      "path": "arc/arc_2_ep_12_30.psarc",
+      "size_bytes": 2758017112,
+      "sha256": "0c12eb9ea50619729d29352e4136fcbd0aa17c44a653265d5b79a014e0e4dea3"
+    },
+    {
+      "path": "arc/arc_3_ep_31_31.psarc",
+      "size_bytes": 3471450325,
+      "sha256": "a23a19ff0b2ef3bb3d283c333b8cbabe7dc03ce25d7c1b0826476b4ace9c4573"
+    },
+    {
+      "path": "sce_module/libSceFace.prx",
+      "size_bytes": 299672,
+      "sha256": "89e134d3162323b29ad89c4af77b9db6501acca4ea382a3d62284c5e99584bd5"
+    },
+    {
+      "path": "sce_module/libSceFios2.prx",
+      "size_bytes": 385249,
+      "sha256": "3b8eb4d5a5c5a7b381d8d0610077e6cd404c29695a686274802f6b2737f6bf22"
+    },
+    {
+      "path": "sce_module/libSceHand.prx",
+      "size_bytes": 25962,
+      "sha256": "0ef7de31c741b20a50b641bdc576ff9df467509eb511e60cb43d7ee5f240b070"
+    },
+    {
+      "path": "sce_module/libSceHeadTracker.prx",
+      "size_bytes": 1350418,
+      "sha256": "2ebfb4c208c3fbdd38c5f7a0f95f50b682ce2126a539c9be3fb9792ad761e1cb"
+    },
+    {
+      "path": "sce_module/libSceS3DConversion.prx",
+      "size_bytes": 292658,
+      "sha256": "86a854022a1ad1a2940787acd7e47c7a84e67148b2b641dba5452771506d20b9"
+    },
+    {
+      "path": "sce_module/libSceSmart.prx",
+      "size_bytes": 1452561,
+      "sha256": "43f433e5459033e201bea857002343bb2436c03c33401c4f0c938b3e197df1ab"
+    },
+    {
+      "path": "sce_module/libc.prx",
+      "size_bytes": 934754,
+      "sha256": "4378b47f46f1d856824a6f971db1a0c3f41833b77f49d2fba9538f667a139166"
+    },
+    {
+      "path": "sce_sys/digests",
+      "size_bytes": 896,
+      "sha256": "5077282abb5d79bf2af0cdef158e8d9ba9dc0954e301306607577290de099a5f"
+    },
+    {
+      "path": "sce_sys/entry_keys",
+      "size_bytes": 2048,
+      "sha256": "5813d2cfa57d6094e1f127761d0c3afdd92b1333996c85fefff3beca846bd820"
+    },
+    {
+      "path": "sce_sys/entry_names",
+      "size_bytes": 249,
+      "sha256": "0fdf8081072008d04bc5fe0ab74835aafaf85709540c47e54751992f7f441fbc"
+    },
+    {
+      "path": "sce_sys/general_digests",
+      "size_bytes": 384,
+      "sha256": "4fe5e35a7bbd2aa93246487b36a5a9982609d6c997786fc452ec4f0d272468f9"
+    },
+    {
+      "path": "sce_sys/icon0.dds",
+      "size_bytes": 131200,
+      "sha256": "77911e8d3784ee55496a01fca40290a5736a621518c8cb99c860ee445621179a"
+    },
+    {
+      "path": "sce_sys/icon0.png",
+      "size_bytes": 311482,
+      "sha256": "6c3de613f4aa8b3d98cafd036a0f812d3e0354837b2a868c8b7cc2ecbc9cda55"
+    },
+    {
+      "path": "sce_sys/image_key",
+      "size_bytes": 256,
+      "sha256": "062861127674a8f8ef3c492a55a99ffe11ce4ce4b25d74aa4947bf5fa2a46e9c"
+    },
+    {
+      "path": "sce_sys/keystone",
+      "size_bytes": 96,
+      "sha256": "f2a591c9f359c784f45200ce6dbdf88fd26e9b5e8a2620348e23d22f8599eaf3"
+    },
+    {
+      "path": "sce_sys/license.dat",
+      "size_bytes": 1024,
+      "sha256": "5e400d8b3a9291d8c7676536481baaf582c79d62a98a71bef3f3b0ef2258602f"
+    },
+    {
+      "path": "sce_sys/metas",
+      "size_bytes": 896,
+      "sha256": "ec20f2460cbea479df2ebda6d63b8b9b588d7265448137ccaf54e0367b2b69c3"
+    },
+    {
+      "path": "sce_sys/npbind.dat",
+      "size_bytes": 532,
+      "sha256": "c8a8d8ab9044adfa4e9d9cd5ba5f5ff34193490535db99ca5f3d0f8e9f9b9110"
+    },
+    {
+      "path": "sce_sys/nptitle.dat",
+      "size_bytes": 160,
+      "sha256": "e08937bf4651b969299da89df02c964b0ce930d2c97e7d6ce4646bf40803a527"
+    },
+    {
+      "path": "sce_sys/param.sfo",
+      "size_bytes": 1668,
+      "sha256": "14a1eb4ab6fc8134e93a3ad626da321cb5af275e389864ab51fd13a597f7142d"
+    },
+    {
+      "path": "sce_sys/pic0.dds",
+      "size_bytes": 1036928,
+      "sha256": "e5f8a812d05915c66c474b5233abb1e09449219f7892128f00f8844a4e88ee99"
+    },
+    {
+      "path": "sce_sys/pic0.png",
+      "size_bytes": 6241251,
+      "sha256": "5a8588c64e4fe31fd84b3830a2531581c7eabc2f41fc0923f3aed154c41a0a17"
+    },
+    {
+      "path": "sce_sys/pic1.dds",
+      "size_bytes": 1036928,
+      "sha256": "e279a8cad6088fd2f11bf3417dddf7212133039ad771b9fbf660b7d2c6b9b0dc"
+    },
+    {
+      "path": "sce_sys/pic1.png",
+      "size_bytes": 2238498,
+      "sha256": "d70d4bfab64cdca05da9b4bca3c4cdda1b6a900f108a454162ec68860f5725ba"
+    },
+    {
+      "path": "sce_sys/playgo-chunk.dat",
+      "size_bytes": 608,
+      "sha256": "c83d539a44f7db6df6fe6e5ff61b2287385e7460544e285820eaf42365700836"
+    },
+    {
+      "path": "sce_sys/playgo-chunk.sha",
+      "size_bytes": 610344,
+      "sha256": "96fd03ffed285aa2b6433e8aff1abe3bb46ad2029f9a714042ca50cfef9d9f9a"
+    },
+    {
+      "path": "sce_sys/playgo-manifest.xml",
+      "size_bytes": 370,
+      "sha256": "d5eaefc32cd462933dbafcccd7529b882dad105221b80fb331a103b77f396b99"
+    },
+    {
+      "path": "sce_sys/pronunciation.sig",
+      "size_bytes": 20,
+      "sha256": "2c81da874ac2f2cf4d7695dc63af174c0c919d3e9bedfa125ab1bd2d809303f6"
+    },
+    {
+      "path": "sce_sys/pronunciation.xml",
+      "size_bytes": 2857,
+      "sha256": "675781feb8916fcfbfd3c5a51f88d246ccc3e3ef3ddaf7c7e52c282ceba996b0"
+    },
+    {
+      "path": "sce_sys/psreserved.dat",
+      "size_bytes": 8192,
+      "sha256": "9f1dcbc35c350d6027f98be0f5c8b43b42ca52b7604459c0c42be3aa88913d47"
+    },
+    {
+      "path": "sce_sys/pubtoolinfo.dat",
+      "size_bytes": 1024,
+      "sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+    },
+    {
+      "path": "sce_sys/save_data.png",
+      "size_bytes": 51622,
+      "sha256": "2ddc53ace62e8f27f18c3f31a9d216fda93c551f063759b34248f8ffe0057123"
+    },
+    {
+      "path": "sce_sys/shareparam.json",
+      "size_bytes": 178,
+      "sha256": "083ae0d0805d42c5704f6c72e2666922f3bae9f8311cb98c14e56f809786cdd6"
+    },
+    {
+      "path": "sce_sys/about/right.sprx",
+      "size_bytes": 16025,
+      "sha256": "7ac46af09bedc1ff31a51977e52c959080e1213cede37d9794315a3986c72de7"
+    },
+    {
+      "path": "sce_sys/changeinfo/changeinfo.xml",
+      "size_bytes": 214,
+      "sha256": "044dfbfa8d42344f3ea82d57771cbb4722783c8c2095da7f64843afe7c45a834"
+    },
+    {
+      "path": "sce_sys/keymap_rp/000.png",
+      "size_bytes": 176441,
+      "sha256": "d98317719b4d0630bf4fda75c49c7b0128de464b7652577e1af0835e3e0fefbb"
+    },
+    {
+      "path": "sce_sys/trophy/trophy00.trp",
+      "size_bytes": 6739936,
+      "sha256": "adfc3c1559fa74eff41d084f77e34568d6f03ae9c0264a6e4f21c36e84c60e3f"
+    }
+  ]
+}

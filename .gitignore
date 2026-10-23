@@ -1,0 +1,15 @@
+CUSA01130/
+*.psarc
+*.cpk
+*.pkg
+*.prx
+*.sprx
+*.elf
+eboot.bin
+/build/
+/out/
+/bin/
+/user/
+__pycache__/
+*.log
+*.raw
