@@ -596,6 +596,74 @@ GRAVITY_SYSV_ABI void* hle_tls_get_addr(const std::size_t ti[2]) {
     return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(tp) + ti[1]);
 }
 
+// -----------------------------------------------------------------------------
+// Setjmp & Longjmp
+// -----------------------------------------------------------------------------
+
+GRAVITY_SYSV_ABI __attribute__((naked)) int hle_setjmp(void* /*env*/) {
+    __asm__ volatile (
+        "movq %rbx, 0(%rdi)\n\t"
+        "movq %rbp, 8(%rdi)\n\t"
+        "movq %r12, 16(%rdi)\n\t"
+        "movq %r13, 24(%rdi)\n\t"
+        "movq %r14, 32(%rdi)\n\t"
+        "movq %r15, 40(%rdi)\n\t"
+        "leaq 8(%rsp), %rax\n\t"
+        "movq %rax, 48(%rdi)\n\t"
+        "movq (%rsp), %rax\n\t"
+        "movq %rax, 56(%rdi)\n\t"
+        "xorl %eax, %eax\n\t"
+        "retq\n\t"
+    );
+}
+
+GRAVITY_SYSV_ABI __attribute__((naked)) void hle_longjmp(void* /*env*/, int /*val*/) {
+    __asm__ volatile (
+        "movl %esi, %eax\n\t"
+        "testl %eax, %eax\n\t"
+        "jnz 1f\n\t"
+        "incl %eax\n\t"
+        "1:\n\t"
+        "movq 0(%rdi), %rbx\n\t"
+        "movq 8(%rdi), %rbp\n\t"
+        "movq 16(%rdi), %r12\n\t"
+        "movq 24(%rdi), %r13\n\t"
+        "movq 32(%rdi), %r14\n\t"
+        "movq 40(%rdi), %r15\n\t"
+        "movq 48(%rdi), %rsp\n\t"
+        "jmpq *56(%rdi)\n\t"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Remaining Libc & Libkernel P0 Diagnostics & Data Symbols
+// -----------------------------------------------------------------------------
+
+alignas(8) std::uint8_t hle_Qoo175Ig[8]{};
+alignas(8) std::uint8_t hle_wiRrIcbnlc[24]{};
+alignas(8) std::uint8_t hle_yLE5H3058Ao[48] = {
+    0x43, 0x23, 0x41, 0x00, 0x75, 0x42, 0x6c, 0x77, 0x52, 0x66, 0x52, 0x62, 0x2d, 0x43, 0x4d, 0x23,
+    0x43, 0x23, 0x41, 0x00, 0x6f, 0x65, 0x39, 0x74, 0x53, 0x30, 0x56, 0x7a, 0x74, 0x59, 0x6b, 0x23,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+alignas(8) std::uint8_t hle_Bq8m04PN1zw[48] = {
+    0x43, 0x23, 0x41, 0x00, 0x39, 0x46, 0x46, 0x2b, 0x54, 0x35, 0x58, 0x6b, 0x73, 0x39, 0x45, 0x23,
+    0x43, 0x23, 0x41, 0x00, 0x35, 0x72, 0x38, 0x30, 0x31, 0x5a, 0x57, 0x69, 0x4a, 0x4a, 0x49, 0x23,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+GRAVITY_SYSV_ABI int hle_XKRegsFpEpk() { return 0; }
+GRAVITY_SYSV_ABI int hle_PDX01ziUz()   { return 0; }
+GRAVITY_SYSV_ABI int hle_eT2UsmTewbU() { return 0; }
+GRAVITY_SYSV_ABI int hle_tQIoGIPklo()  { return 0; }
+GRAVITY_SYSV_ABI int hle_ozMAr28BwSY() { return 0; }
+GRAVITY_SYSV_ABI int hle_P8F2oavZXtY() { return 0; }
+GRAVITY_SYSV_ABI int hle_DuW5ZqZv70()  { return 0; }
+GRAVITY_SYSV_ABI int hle_3qxgM4ezETA() { return 0; }
+GRAVITY_SYSV_ABI int hle_eXbUSpEaTsA() { return 0; }
+GRAVITY_SYSV_ABI int hle_DzES9hQF4f4() { return 0; }
+
 } // extern "C"
 
 } // namespace gravity::hle::libc
+

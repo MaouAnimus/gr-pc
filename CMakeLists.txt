@@ -37,14 +37,17 @@ add_library(gravity_runtime STATIC
     engine/src/system_service.cpp
     engine/src/playgo.cpp
     engine/src/runner/runner.cpp
+    engine/src/savedata/savedata.cpp
+    engine/src/font/font.cpp
+    engine/src/gnm/shader_pipeline.cpp
     engine/src/libc/libc.cpp
     engine/src/registry/adapter_registry.cpp)
-target_include_directories(gravity_runtime PUBLIC engine/include)
+target_include_directories(gravity_runtime PUBLIC engine/include C:/msys64/clang64/include/freetype2)
 target_compile_features(gravity_runtime PUBLIC cxx_std_23)
 target_compile_definitions(gravity_runtime PUBLIC
     WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_compile_options(gravity_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt)
+target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt freetype)
 
 add_executable(gravity_runtime_probe engine/src/runtime_probe.cpp)
 target_link_libraries(gravity_runtime_probe PRIVATE gravity_runtime)
@@ -128,7 +131,7 @@ if(BUILD_TESTING)
     add_executable(libc_tests tests/libc_tests.cpp)
     target_link_libraries(libc_tests PRIVATE gravity_runtime)
     target_compile_options(libc_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    foreach(suite math string_memory conversions cxx_runtime mspace atomics_tables)
+    foreach(suite math string_memory conversions cxx_runtime mspace atomics_tables setjmp_longjmp)
         add_test(NAME libc_${suite} COMMAND libc_tests ${suite})
         set_tests_properties(libc_${suite} PROPERTIES TIMEOUT 10)
     endforeach()
@@ -201,4 +204,23 @@ if(BUILD_TESTING)
         add_test(NAME registry_${suite} COMMAND registry_tests ${suite})
         set_tests_properties(registry_${suite} PROPERTIES TIMEOUT 10)
     endforeach()
+
+    # SaveData & User Service tests
+    add_executable(savedata_tests tests/savedata_tests.cpp)
+    target_link_libraries(savedata_tests PRIVATE gravity_runtime)
+    target_compile_options(savedata_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite user_service save_mount_vfs save_dialog)
+        add_test(NAME savedata_${suite} COMMAND savedata_tests ${suite})
+        set_tests_properties(savedata_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+
+    # Font & FreeType tests
+    add_executable(font_tests tests/font_tests.cpp)
+    target_link_libraries(font_tests PRIVATE gravity_runtime)
+    target_compile_options(font_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lifecycle metrics_rendering)
+        add_test(NAME font_${suite} COMMAND font_tests ${suite})
+        set_tests_properties(font_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
 endif()
+

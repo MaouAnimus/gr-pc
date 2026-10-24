@@ -1,5 +1,6 @@
 #include "hle/video.h"
 #include "hle/gnm.h"
+#include "hle/gnm/shader_pipeline.h"
 #include "hle/kernel.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -179,8 +180,10 @@ public:
             return {hle::Error::system_error};
         }
 
-        // 9. Inform GNM subsystem of device
+        // 9. Inform GNM subsystem of device and setup shader pipeline
         gnm::setDevice(device_);
+        gnm::VulkanShaderPipeline::instance().initialize(device_, physical_device_, VK_FORMAT_B8G8R8A8_UNORM);
+        gnm::command_queue().set_resolver(gnm::VulkanShaderPipeline::instance().get_resolver());
 
         initialized_ = true;
         headless_ = false;
@@ -195,8 +198,11 @@ public:
             if (device_ != VK_NULL_HANDLE) {
                 vkDeviceWaitIdle(device_);
             }
+            gnm::VulkanShaderPipeline::instance().shutdown();
             cleanup_swapchain();
             cleanup_vulkan();
+        } else {
+            gnm::VulkanShaderPipeline::instance().shutdown();
         }
 
         gnm::setDevice(VK_NULL_HANDLE);

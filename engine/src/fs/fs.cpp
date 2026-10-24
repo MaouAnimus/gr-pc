@@ -83,13 +83,39 @@ public:
         open_dirs_.clear();
         next_dirfd_ = 100;
         archives_.clear();
+        custom_mounts_.clear();
         total_files_ = 0;
         initialized_ = false;
     }
 
+    void mount_path(std::string_view guest_prefix, const std::filesystem::path& host_path) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        custom_mounts_[std::string(guest_prefix)] = host_path;
+    }
+
+    void unmount_path(std::string_view guest_prefix) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        custom_mounts_.erase(std::string(guest_prefix));
+    }
+
+    std::optional<std::filesystem::path> resolve_custom_path_locked(std::string_view p) {
+        for (const auto& [prefix, host_root] : custom_mounts_) {
+            if (p == prefix || (p.starts_with(prefix) && (p.size() == prefix.size() || p[prefix.size()] == '/'))) {
+                std::string_view sub = p.substr(prefix.size());
+                while (!sub.empty() && sub.front() == '/') sub.remove_prefix(1);
+                std::filesystem::path sub_p(sub);
+                for (const auto& comp : sub_p) {
+                    if (comp == "..") return std::nullopt;
+                }
+                return host_root / sub_p;
+            }
+        }
+        return std::nullopt;
+    }
+
     int32_t open(const char* path, int32_t flags, int32_t mode) {
         (void)mode;
-        if (!path || (flags & 3)) return -1; // /app0 is read-only.
+        if (!path) return -1;
 
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_) {
@@ -97,6 +123,41 @@ public:
         }
 
         std::string_view p(path);
+        if (auto custom = resolve_custom_path_locked(p)) {
+            const auto real_path = *custom;
+            std::error_code ec;
+            if (flags & 0x0200) {
+                std::filesystem::create_directories(real_path.parent_path(), ec);
+            }
+
+            DWORD access = GENERIC_READ;
+            if ((flags & 3) == 1) access = GENERIC_WRITE;
+            else if ((flags & 3) == 2) access = GENERIC_READ | GENERIC_WRITE;
+
+            DWORD creation = OPEN_EXISTING;
+            if (flags & 0x0200) {
+                if (flags & 0x0800) creation = CREATE_NEW;
+                else if (flags & 0x0400) creation = CREATE_ALWAYS;
+                else creation = OPEN_ALWAYS;
+            } else if (flags & 0x0400) {
+                creation = TRUNCATE_EXISTING;
+            }
+
+            HANDLE h = CreateFileW(real_path.wstring().c_str(), access,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                   nullptr, creation, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                VfsFile vf{};
+                vf.is_psarc = false;
+                vf.win_handle = h;
+                int32_t fd = next_fd_++;
+                open_files_[fd] = std::move(vf);
+                return fd;
+            }
+            return -1;
+        }
+
+        if (flags & 3) return -1; // /app0 is read-only.
         std::string norm = PsarcArchive::normalize_path(p);
         const std::filesystem::path relative(norm);
         if (relative.empty() || relative.is_absolute() || relative.has_root_name() ||
@@ -184,6 +245,18 @@ public:
         }
     }
 
+    int32_t write(int32_t fd, const void* buf, uint32_t size) {
+        if (!buf || size == 0) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_files_.find(fd);
+        if (it == open_files_.end() || it->second.is_psarc || it->second.win_handle == INVALID_HANDLE_VALUE) return -1;
+        DWORD bytes_written = 0;
+        if (WriteFile(it->second.win_handle, buf, size, &bytes_written, nullptr)) {
+            return static_cast<int32_t>(bytes_written);
+        }
+        return -1;
+    }
+
     int64_t lseek(int32_t fd, int64_t offset, int32_t whence) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = open_files_.find(fd);
@@ -252,6 +325,22 @@ public:
         }
     }
 
+    int32_t pwrite(int32_t fd, const void* buf, uint32_t size, int64_t offset) {
+        if (!buf || size == 0 || offset < 0) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_files_.find(fd);
+        if (it == open_files_.end() || it->second.is_psarc || it->second.win_handle == INVALID_HANDLE_VALUE) return -1;
+        LARGE_INTEGER cur_pos{}, zero{};
+        if (!SetFilePointerEx(it->second.win_handle, zero, &cur_pos, FILE_CURRENT)) return -1;
+        LARGE_INTEGER target{};
+        target.QuadPart = offset;
+        if (!SetFilePointerEx(it->second.win_handle, target, nullptr, FILE_BEGIN)) return -1;
+        DWORD bytes_written = 0;
+        BOOL ok = WriteFile(it->second.win_handle, buf, size, &bytes_written, nullptr);
+        SetFilePointerEx(it->second.win_handle, cur_pos, nullptr, FILE_BEGIN);
+        return ok ? static_cast<int32_t>(bytes_written) : -1;
+    }
+
     int64_t get_size(int32_t fd) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = open_files_.find(fd);
@@ -294,6 +383,14 @@ public:
         }
 
         std::string_view p(path);
+        if (auto custom = resolve_custom_path_locked(p)) {
+            std::error_code ec;
+            if (std::filesystem::exists(*custom, ec) && std::filesystem::is_regular_file(*custom, ec)) {
+                return static_cast<int64_t>(std::filesystem::file_size(*custom, ec));
+            }
+            return -1;
+        }
+
         std::string norm = PsarcArchive::normalize_path(p);
         for (const auto& arc : archives_) {
             const auto* entry = arc->get_entry(norm);
@@ -319,6 +416,11 @@ public:
         }
 
         std::string_view p(path);
+        if (auto custom = resolve_custom_path_locked(p)) {
+            std::error_code ec;
+            return std::filesystem::exists(*custom, ec);
+        }
+
         std::string norm = PsarcArchive::normalize_path(p);
         for (const auto& arc : archives_) {
             if (arc->get_entry(norm)) return true;
@@ -338,6 +440,11 @@ public:
         }
 
         std::string_view p(path);
+        if (auto custom = resolve_custom_path_locked(p)) {
+            std::error_code ec;
+            return std::filesystem::is_directory(*custom, ec);
+        }
+
         std::string norm = PsarcArchive::normalize_path(p);
         const auto root = std::filesystem::weakly_canonical(base_dir_);
         const auto real_path = std::filesystem::weakly_canonical(root / norm);
@@ -362,7 +469,6 @@ public:
         }
 
         std::string_view p(path);
-        std::string norm = PsarcArchive::normalize_path(p);
         struct RawStat {
             int64_t size{0};
             int64_t ctime{0};
@@ -373,6 +479,28 @@ public:
         };
         auto* st = static_cast<RawStat*>(out_stat);
         std::memset(st, 0, sizeof(RawStat));
+
+        if (auto custom = resolve_custom_path_locked(p)) {
+            std::error_code ec;
+            auto fs_status = std::filesystem::status(*custom, ec);
+            if (ec || !std::filesystem::exists(fs_status)) return -1;
+            if (std::filesystem::is_directory(fs_status)) {
+                st->size = 0;
+                st->mode = 0040755;
+            } else {
+                st->size = static_cast<int64_t>(std::filesystem::file_size(*custom, ec));
+                st->mode = 0100644;
+            }
+            auto lwt = std::filesystem::last_write_time(*custom, ec);
+            if (!ec) {
+                auto sct = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+                    std::chrono::file_clock::to_sys(lwt)).time_since_epoch().count();
+                st->ctime = st->mtime = st->atime = sct;
+            }
+            return 0;
+        }
+
+        std::string norm = PsarcArchive::normalize_path(p);
 
         for (const auto& arc : archives_) {
             const auto* entry = arc->get_entry(norm);
@@ -428,8 +556,24 @@ public:
         }
 
         std::string_view p(path);
-        std::string norm = PsarcArchive::normalize_path(p);
         VfsDir dir{};
+        if (auto custom = resolve_custom_path_locked(p)) {
+            std::error_code ec;
+            if (std::filesystem::exists(*custom, ec) && std::filesystem::is_directory(*custom, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(*custom, ec)) {
+                    dir.entries.push_back({
+                        entry.path().filename().string(),
+                        entry.is_directory(ec),
+                        entry.is_regular_file(ec) ? static_cast<int64_t>(entry.file_size(ec)) : 0
+                    });
+                }
+            }
+            int32_t dirfd = next_dirfd_++;
+            open_dirs_[dirfd] = std::move(dir);
+            return dirfd;
+        }
+
+        std::string norm = PsarcArchive::normalize_path(p);
 
         const auto root = std::filesystem::weakly_canonical(base_dir_);
         const auto real_path = std::filesystem::weakly_canonical(root / norm);
@@ -539,6 +683,7 @@ private:
     std::vector<std::unique_ptr<PsarcArchive>> archives_{};
     std::unordered_map<int32_t, VfsFile> open_files_{};
     std::unordered_map<int32_t, VfsDir> open_dirs_{};
+    std::unordered_map<std::string, std::filesystem::path> custom_mounts_{};
     int32_t next_fd_{10};
     int32_t next_dirfd_{100};
     std::size_t total_files_{0};
@@ -562,6 +707,14 @@ std::size_t vfs_total_files_count() {
     return VfsManager::instance().total_files_count();
 }
 
+void vfs_mount_path(std::string_view guest_prefix, const std::filesystem::path& host_path) {
+    VfsManager::instance().mount_path(guest_prefix, host_path);
+}
+
+void vfs_unmount_path(std::string_view guest_prefix) {
+    VfsManager::instance().unmount_path(guest_prefix);
+}
+
 int32_t vfs_open(const char* path, int32_t flags, int32_t mode) {
     return VfsManager::instance().open(path, flags, mode);
 }
@@ -574,8 +727,16 @@ int32_t vfs_read(int32_t fd, void* buf, uint32_t size) {
     return VfsManager::instance().read(fd, buf, size);
 }
 
+int32_t vfs_write(int32_t fd, const void* buf, uint32_t size) {
+    return VfsManager::instance().write(fd, buf, size);
+}
+
 int32_t vfs_pread(int32_t fd, void* buf, uint32_t size, int64_t offset) {
     return VfsManager::instance().pread(fd, buf, size, offset);
+}
+
+int32_t vfs_pwrite(int32_t fd, const void* buf, uint32_t size, int64_t offset) {
+    return VfsManager::instance().pwrite(fd, buf, size, offset);
 }
 
 int64_t vfs_lseek(int32_t fd, int64_t offset, int32_t whence) {
@@ -633,8 +794,7 @@ GRAVITY_SYSV_ABI int32_t sceFios2Read(int32_t fd, void* buf, uint32_t size) {
 }
 
 GRAVITY_SYSV_ABI int32_t sceFios2Write(int32_t fd, const void* buf, uint32_t size) {
-    (void)fd; (void)buf; (void)size;
-    return -1; // Read-only VFS for archives
+    return VfsManager::instance().write(fd, buf, size);
 }
 
 GRAVITY_SYSV_ABI int64_t sceFios2Lseek(int32_t fd, int64_t offset, int32_t whence) {

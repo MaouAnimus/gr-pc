@@ -135,6 +135,17 @@ int main(int argc, char** argv) {
         CHECK(tolower != nullptr);
         CHECK(tolower['A'] == 'a');
         CHECK(tolower['b'] == 'b');
+    } else if (suite == "setjmp_longjmp") {
+        std::uint64_t env[16]{};
+        volatile int count = 0;
+        int val = hle_setjmp(env);
+        if (val == 0) {
+            count = 1;
+            hle_longjmp(env, 42);
+        } else {
+            CHECK(val == 42);
+            CHECK(count == 1);
+        }
     } else return 2;
 
     std::puts("PASS libc");

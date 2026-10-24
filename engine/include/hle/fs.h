@@ -4,6 +4,8 @@
 #include "hle/abi.h"
 #include "hle/fs/psarc.h"
 #include <cstdint>
+#include <filesystem>
+#include <string_view>
 
 namespace gravity::hle::fs {
 
@@ -12,12 +14,16 @@ bool initialize_vfs(const std::wstring& base_path = L"CUSA01130");
 void shutdown_vfs();
 std::size_t vfs_mounted_archives_count();
 std::size_t vfs_total_files_count();
+void vfs_mount_path(std::string_view guest_prefix, const std::filesystem::path& host_path);
+void vfs_unmount_path(std::string_view guest_prefix);
 
 // High-level VFS C++ helpers used across the engine and FIOS
 int32_t vfs_open(const char* path, int32_t flags = 0, int32_t mode = 0);
 int32_t vfs_close(int32_t fd);
 int32_t vfs_read(int32_t fd, void* buf, uint32_t size);
+int32_t vfs_write(int32_t fd, const void* buf, uint32_t size);
 int32_t vfs_pread(int32_t fd, void* buf, uint32_t size, int64_t offset);
+int32_t vfs_pwrite(int32_t fd, const void* buf, uint32_t size, int64_t offset);
 int64_t vfs_lseek(int32_t fd, int64_t offset, int32_t whence);
 int64_t vfs_get_size(int32_t fd);
 int64_t vfs_tell(int32_t fd);

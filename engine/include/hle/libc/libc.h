@@ -117,6 +117,27 @@ GRAVITY_SYSV_ABI int          hle_sceKernelGetdents(int fd, char* buf, int nbyte
 GRAVITY_SYSV_ABI void         hle_scePthreadExit(void* value_ptr);
 GRAVITY_SYSV_ABI int          hle_sceSysmoduleIsLoaded(std::uint16_t id);
 GRAVITY_SYSV_ABI void*        hle_tls_get_addr(const std::size_t ti[2]);
+
+// Setjmp & Longjmp
+GRAVITY_SYSV_ABI int          hle_setjmp(void* env);
+GRAVITY_SYSV_ABI void         hle_longjmp(void* env, int val);
+
+// Remaining Libc & Libkernel P0 Diagnostics & Stubs
+GRAVITY_SYSV_ABI int          hle_XKRegsFpEpk();
+GRAVITY_SYSV_ABI int          hle_PDX01ziUz();
+GRAVITY_SYSV_ABI int          hle_eT2UsmTewbU();
+GRAVITY_SYSV_ABI int          hle_tQIoGIPklo();
+GRAVITY_SYSV_ABI int          hle_ozMAr28BwSY();
+GRAVITY_SYSV_ABI int          hle_P8F2oavZXtY();
+GRAVITY_SYSV_ABI int          hle_DuW5ZqZv70();
+GRAVITY_SYSV_ABI int          hle_3qxgM4ezETA();
+GRAVITY_SYSV_ABI int          hle_eXbUSpEaTsA();
+GRAVITY_SYSV_ABI int          hle_DzES9hQF4f4();
+
+extern std::uint8_t hle_Qoo175Ig[8];
+extern std::uint8_t hle_wiRrIcbnlc[24];
+extern std::uint8_t hle_yLE5H3058Ao[48];
+extern std::uint8_t hle_Bq8m04PN1zw[48];
 }
 
 } // namespace gravity::hle::libc

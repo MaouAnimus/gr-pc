@@ -16,6 +16,8 @@
 #include "hle/fs/fios.h"
 #include "hle/playgo.h"
 #include "hle/libc/libc.h"
+#include "hle/savedata/savedata.h"
+#include "hle/font/font.h"
 #include "hle/guest_memory.h"
 #include <ctime>
 #include <windows.h>
@@ -1471,6 +1473,81 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("k04jLXu3+Ic", "libc", "sceLibcMspaceMallocStatsFast", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMallocStatsFast));
     register_adapter("fEoW6BJsPt4", "libc", "sceLibcMspaceMallocUsableSize", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMallocUsableSize));
     register_adapter("p6lrRW8-MLY", "libc", "sceLibcMspaceReallocalign", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceReallocalign));
+
+    // ---------------------------------------------------------------------
+    // 20. Remaining Libc & Kernel P0 Symbols
+    // ---------------------------------------------------------------------
+    register_adapter("gNQ1V2vfXDE", "libc", "setjmp", reinterpret_cast<uintptr_t>(&libc::hle_setjmp));
+    register_adapter("lKEN2IebgJ0", "libc", "longjmp", reinterpret_cast<uintptr_t>(&libc::hle_longjmp));
+    register_adapter("Qoo175Ig+-k", "libc", "Qoo175Ig", reinterpret_cast<uintptr_t>(&libc::hle_Qoo175Ig), true);
+    register_adapter("wiR+rIcbnlc", "libc", "wiRrIcbnlc", reinterpret_cast<uintptr_t>(&libc::hle_wiRrIcbnlc), true);
+    register_adapter("yLE5H3058Ao", "libc", "yLE5H3058Ao", reinterpret_cast<uintptr_t>(&libc::hle_yLE5H3058Ao), true);
+    register_adapter("Bq8m04PN1zw", "libc", "Bq8m04PN1zw", reinterpret_cast<uintptr_t>(&libc::hle_Bq8m04PN1zw), true);
+    register_adapter("XKRegsFpEpk", "libc", "XKRegsFpEpk", reinterpret_cast<uintptr_t>(&libc::hle_XKRegsFpEpk));
+    register_adapter("PDX01ziUz+4", "libc", "PDX01ziUz", reinterpret_cast<uintptr_t>(&libc::hle_PDX01ziUz));
+    register_adapter("eT2UsmTewbU", "libc", "eT2UsmTewbU", reinterpret_cast<uintptr_t>(&libc::hle_eT2UsmTewbU));
+    register_adapter("tQIo+GIPklo", "libc", "tQIoGIPklo", reinterpret_cast<uintptr_t>(&libc::hle_tQIoGIPklo));
+    register_adapter("ozMAr28BwSY", "libc", "ozMAr28BwSY", reinterpret_cast<uintptr_t>(&libc::hle_ozMAr28BwSY));
+    register_adapter("P8F2oavZXtY", "libc", "P8F2oavZXtY", reinterpret_cast<uintptr_t>(&libc::hle_P8F2oavZXtY));
+    register_adapter("DuW5ZqZv-70", "libc", "DuW5ZqZv70", reinterpret_cast<uintptr_t>(&libc::hle_DuW5ZqZv70));
+    register_adapter("3qxgM4ezETA", "libkernel", "3qxgM4ezETA", reinterpret_cast<uintptr_t>(&libc::hle_3qxgM4ezETA));
+    register_adapter("eXbUSpEaTsA", "libkernel", "eXbUSpEaTsA", reinterpret_cast<uintptr_t>(&libc::hle_eXbUSpEaTsA));
+    register_adapter("DzES9hQF4f4", "libkernel", "DzES9hQF4f4", reinterpret_cast<uintptr_t>(&libc::hle_DzES9hQF4f4));
+
+    // ---------------------------------------------------------------------
+    // 21. libSceUserService & libSceSaveData / libSceSaveDataDialog
+    // ---------------------------------------------------------------------
+    register_adapter("j3YMu1MVNNo", "libSceUserService", "sceUserServiceInitialize", reinterpret_cast<uintptr_t>(&savedata::sceUserServiceInitialize));
+    register_adapter("bwFjS+bX9mA", "libSceUserService", "sceUserServiceTerminate", reinterpret_cast<uintptr_t>(&savedata::sceUserServiceTerminate));
+    register_adapter("CdWp0oHWGr0", "libSceUserService", "sceUserServiceGetInitialUser", reinterpret_cast<uintptr_t>(&savedata::sceUserServiceGetInitialUser));
+    register_adapter("1xxcMiGu2fo", "libSceUserService", "sceUserServiceGetUserName", reinterpret_cast<uintptr_t>(&savedata::sceUserServiceGetUserName));
+
+    register_adapter("ZkZhskCPXFw", "libSceSaveData", "sceSaveDataInitialize", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataInitialize));
+    register_adapter("yKDy8S5yLA0", "libSceSaveData", "sceSaveDataTerminate", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataTerminate));
+    register_adapter("dyIhnXq-0SM", "libSceSaveData", "sceSaveDataDirNameSearch", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDirNameSearch));
+    register_adapter("v7AAAMo0Lz4", "libSceSaveData", "sceSaveDataSetupSaveDataMemory", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataSetupSaveDataMemory));
+    register_adapter("7Bt5pBC-Aco", "libSceSaveData", "sceSaveDataGetSaveDataMemory", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataGetSaveDataMemory));
+    register_adapter("S1GkePI17zQ", "libSceSaveData", "sceSaveDataDelete", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDelete));
+    register_adapter("32HQAQdwM2o", "libSceSaveData", "sceSaveDataMount", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataMount));
+    register_adapter("BMR4F-Uek3E", "libSceSaveData", "sceSaveDataUmount", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataUmount));
+    register_adapter("85zul--eGXs", "libSceSaveData", "sceSaveDataSetParam", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataSetParam));
+    register_adapter("c88Yy54Mx0w", "libSceSaveData", "sceSaveDataSaveIcon", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataSaveIcon));
+    register_adapter("h3YURzXGSVQ", "libSceSaveData", "sceSaveDataSetSaveDataMemory", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataSetSaveDataMemory));
+
+    register_adapter("s9e3+YpRnzw", "libSceSaveDataDialog", "sceSaveDataDialogInitialize", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogInitialize));
+    register_adapter("YuH2FA7azqQ", "libSceSaveDataDialog", "sceSaveDataDialogTerminate", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogTerminate));
+    register_adapter("4tPhsP6FpDI", "libSceSaveDataDialog", "sceSaveDataDialogOpen", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogOpen));
+    register_adapter("fH46Lag88XY", "libSceSaveDataDialog", "sceSaveDataDialogClose", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogClose));
+    register_adapter("KK3Bdg1RWK0", "libSceSaveDataDialog", "sceSaveDataDialogUpdateStatus", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogUpdateStatus));
+    register_adapter("yEiJ-qqr6Cg", "libSceSaveDataDialog", "sceSaveDataDialogGetResult", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogGetResult));
+    register_adapter("en7gNVnh878", "libSceSaveDataDialog", "sceSaveDataDialogIsReadyToDisplay", reinterpret_cast<uintptr_t>(&savedata::sceSaveDataDialogIsReadyToDisplay));
+
+    // ---------------------------------------------------------------------
+    // 22. libSceFont & libSceFontFt (FreeType & Glyph Pipeline)
+    // ---------------------------------------------------------------------
+    register_adapter("oM+XCzVG3oM", "libSceFontFt", "sceFontSelectLibraryFt", reinterpret_cast<uintptr_t>(&font::sceFontSelectLibraryFt));
+    register_adapter("Xx974EW-QFY", "libSceFontFt", "sceFontSelectRendererFt", reinterpret_cast<uintptr_t>(&font::sceFontSelectRendererFt));
+
+    register_adapter("whrS4oksXc4", "libSceFont", "sceFontMemoryInit", reinterpret_cast<uintptr_t>(&font::sceFontMemoryInit));
+    register_adapter("h6hIgxXEiEc", "libSceFont", "sceFontMemoryTerm", reinterpret_cast<uintptr_t>(&font::sceFontMemoryTerm));
+    register_adapter("n590hj5Oe-k", "libSceFont", "sceFontCreateLibraryWithEdition", reinterpret_cast<uintptr_t>(&font::sceFontCreateLibraryWithEdition));
+    register_adapter("FXP359ygujs", "libSceFont", "sceFontDestroyLibrary", reinterpret_cast<uintptr_t>(&font::sceFontDestroyLibrary));
+    register_adapter("WaSFJoRWXaI", "libSceFont", "sceFontCreateRendererWithEdition", reinterpret_cast<uintptr_t>(&font::sceFontCreateRendererWithEdition));
+    register_adapter("exAxkyVLt0s", "libSceFont", "sceFontDestroyRenderer", reinterpret_cast<uintptr_t>(&font::sceFontDestroyRenderer));
+    register_adapter("3OdRkSjOcog", "libSceFont", "sceFontBindRenderer", reinterpret_cast<uintptr_t>(&font::sceFontBindRenderer));
+    register_adapter("1QjhKxrsOB8", "libSceFont", "sceFontUnbindRenderer", reinterpret_cast<uintptr_t>(&font::sceFontUnbindRenderer));
+    register_adapter("SsRbbCiWoGw", "libSceFont", "sceFontSupportSystemFonts", reinterpret_cast<uintptr_t>(&font::sceFontSupportSystemFonts));
+    register_adapter("mz2iTY0MK4A", "libSceFont", "sceFontSupportExternalFonts", reinterpret_cast<uintptr_t>(&font::sceFontSupportExternalFonts));
+    register_adapter("CUKn5pX-NVY", "libSceFont", "sceFontAttachDeviceCacheBuffer", reinterpret_cast<uintptr_t>(&font::sceFontAttachDeviceCacheBuffer));
+    register_adapter("KXUpebrFk1U", "libSceFont", "sceFontOpenFontMemory", reinterpret_cast<uintptr_t>(&font::sceFontOpenFontMemory));
+    register_adapter("vzHs3C8lWJk", "libSceFont", "sceFontCloseFont", reinterpret_cast<uintptr_t>(&font::sceFontCloseFont));
+    register_adapter("N1EBMeGhf7E", "libSceFont", "sceFontSetScalePixel", reinterpret_cast<uintptr_t>(&font::sceFontSetScalePixel));
+    register_adapter("CkVmLoCNN-8", "libSceFont", "sceFontGetScalePixel", reinterpret_cast<uintptr_t>(&font::sceFontGetScalePixel));
+    register_adapter("6vGCkkQJOcI", "libSceFont", "sceFontSetupRenderScalePixel", reinterpret_cast<uintptr_t>(&font::sceFontSetupRenderScalePixel));
+    register_adapter("L97d+3OgMlE", "libSceFont", "sceFontGetCharGlyphMetrics", reinterpret_cast<uintptr_t>(&font::sceFontGetCharGlyphMetrics));
+    register_adapter("kAenWy1Zw5o", "libSceFont", "sceFontRenderCharGlyphImageHorizontal", reinterpret_cast<uintptr_t>(&font::sceFontRenderCharGlyphImageHorizontal));
+    register_adapter("gdUCnU0gHdI", "libSceFont", "sceFontRenderSurfaceInit", reinterpret_cast<uintptr_t>(&font::sceFontRenderSurfaceInit));
+    register_adapter("sDuhHGNhHvE", "libSceFont", "sceFontGetKerning", reinterpret_cast<uintptr_t>(&font::sceFontGetKerning));
 }
 
 } // namespace gravity::hle

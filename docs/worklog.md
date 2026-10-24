@@ -1,3 +1,48 @@
+## 2026-10-24 — Paso 5: Libc/Kernel P0 (100% Resuelto), Guardado Local (libSceSaveData), Pipeline de Fuentes (libSceFont/FreeType) y Shaders Vulkan
+
+- **Objetivo:** Ejecutar de forma integral los cuatro componentes del Paso 5 del Plan de Trabajo para la versión nativa de PC de *Gravity Rush Remastered* (CUSA01130):
+  1. Completar la totalidad de símbolos P0 de `libc` y `libkernel` (115/115 completados; 0 símbolos P0 sin resolver).
+  2. Implementar el subsistema de guardado de partidas y perfil local (`libSceSaveData`, `libSceUserService`, `libSceSaveDataDialog`) respaldado por el VFS y almacenamiento en disco host.
+  3. Crear el pipeline de tipografía y fuentes (`libSceFont`, `libSceFontFt`) con integración FreeType 2 y rasterizador bitmap de reserva para subtítulos, viñetas de cómic e interfaces.
+  4. Implementar el enlace y pipeline de shaders Vulkan (`VulkanShaderPipeline`) con SPIR-V precompilado y resolvedor dinámico de comandos de dibujado PM4.
+
+- **Implementación HLE Detallada:**
+  - **Lote Libc y Kernel P0 (115/115 completado, 0 pendientes P0):**
+    - `setjmp` (`gNQ1V2vfXDE`) y `longjmp` (`lKEN2IebgJ0`): implementados como funciones `__attribute__((naked))` en x86-64 SysV ABI preservando los registros callee-saved (`rbx, rbp, r12, r13, r14, r15, rsp, rip`) sin interferencias con el CRT del host Windows.
+    - Símbolos de datos auténticos extraídos del binario `libc.prx`: `hle_Qoo175Ig` (8B), `hle_wiRrIcbnlc` (24B), `hle_yLE5H3058Ao` (48B), `hle_Bq8m04PN1zw` (48B).
+    - Adaptadores diagnósticos y de control: `hle_XKRegsFpEpk`, `hle_PDX01ziUz`, `hle_eT2UsmTewbU`, `hle_tQIoGIPklo`, `hle_ozMAr28BwSY`, `hle_P8F2oavZXtY`, `hle_DuW5ZqZv70` (`libc`), y `hle_3qxgM4ezETA`, `hle_eXbUSpEaTsA`, `hle_DzES9hQF4f4` (`libkernel`).
+    - Suite de pruebas de regresión `setjmp_longjmp` agregada a `tests/libc_tests.cpp`.
+  - **Subsistema de Guardado y Perfil (`libSceSaveData`, `libSceUserService`, `libSceSaveDataDialog`):**
+    - `libSceUserService`: `sceUserServiceInitialize`, `sceUserServiceTerminate`, `sceUserServiceGetInitialUser` (retornando ID primario `0x10000000`), `sceUserServiceGetUserName` (retornando `"Player"`).
+    - `libSceSaveData`: emulación completa de ciclo de vida (`sceSaveDataInitialize`, `sceSaveDataTerminate`), búsqueda de carpetas en disco host (`sceSaveDataDirNameSearch`), montaje y desmontaje dinámico (`sceSaveDataMount`, `sceSaveDataUmount`), borrado de partidas (`sceSaveDataDelete`), configuración de metadatos (`sceSaveDataSetParam`), almacenamiento de icono de guardado (`sceSaveDataSaveIcon` -> `icon0.png`), y gestión de memoria de guardado (`sceSaveDataSetupSaveDataMemory`, `sceSaveDataGetSaveDataMemory`, `sceSaveDataSetSaveDataMemory`).
+    - `libSceSaveDataDialog`: emulación no bloqueante del cuadro de diálogo oficial (`sceSaveDataDialogInitialize`, `sceSaveDataDialogOpen`, `sceSaveDataDialogUpdateStatus` retornando estado 3 - finalizado, `sceSaveDataDialogGetResult`, `sceSaveDataDialogClose`, `sceSaveDataDialogTerminate`, `sceSaveDataDialogIsReadyToDisplay`).
+    - Enrutamiento dinámico en `VfsManager` (`vfs_mount_path`, `vfs_unmount_path`, `vfs_write`, `vfs_pwrite`): intercepta accesos a `/savedata0` o `/savedata1` y los redirige directamente a la carpeta host `savedata/CUSA01130/<slot>/`, asegurando permisos de lectura y escritura sin alterar el árbol protegido de `/app0`.
+    - Suite de pruebas unitarias `tests/savedata_tests.cpp` con 3 suites (`user_service`, `save_mount_vfs`, `save_dialog`).
+  - **Pipeline de Fuentes y Texto (`libSceFont` & `libSceFontFt`):**
+    - Integración con la biblioteca FreeType 2 (`<ft2build.h>`, `FT_FREETYPE_H`, `FT_GLYPH_H`) junto con un rasterizador integrado de mapas de bits de 8x16 píxeles para los 128 caracteres del código ASCII como fallback resiliente.
+    - Implementación de 22 APIs de fuentes:
+      - `libSceFontFt`: `sceFontSelectLibraryFt`, `sceFontSelectRendererFt`.
+      - `libSceFont`: `sceFontMemoryInit`, `sceFontMemoryTerm`, `sceFontCreateLibraryWithEdition`, `sceFontDestroyLibrary`, `sceFontCreateRendererWithEdition`, `sceFontDestroyRenderer`, `sceFontBindRenderer`, `sceFontUnbindRenderer`, `sceFontSupportSystemFonts`, `sceFontSupportExternalFonts`, `sceFontAttachDeviceCacheBuffer`, `sceFontOpenFontMemory`, `sceFontCloseFont`, `sceFontSetScalePixel`, `sceFontGetScalePixel`, `sceFontSetupRenderScalePixel`, `sceFontGetCharGlyphMetrics`, `sceFontRenderSurfaceInit`, `sceFontRenderCharGlyphImageHorizontal`, `sceFontGetKerning`.
+    - Suite de pruebas unitarias `tests/font_tests.cpp` con suites `lifecycle` y `metrics_rendering` verificando escalado, métricas tipográficas y rasterización horizontal sobre buffers de textura compartidos.
+  - **Traducción y Enlace de Shaders GCN (Vulkan):**
+    - Implementación de `VulkanShaderPipeline` (`engine/src/gnm/shader_pipeline.cpp`) con compilación SPIR-V offline mediante `glslc` y arrays de bytecode embebidos (`engine/src/gnm/spv_arrays.inc`).
+    - Creación de módulos de sombreadores para vértices y fragmentos, diseño de pipeline (`VkPipelineLayout`), y pipeline gráfico con soporte de *Dynamic Rendering* de Vulkan 1.3 (`VkPipelineRenderingCreateInfo`, `VK_DYNAMIC_STATE_VIEWPORT`, `VK_DYNAMIC_STATE_SCISSOR`).
+    - Configuración de buffers de vértices e índices scratch de 64 KB host-visible y host-coherent.
+    - Enlace del `DrawResolver` en la cola de comandos PM4 (`CommandQueue`), garantizando la resolución instantánea de estados gráficos y descriptores de vértices sin fallos de validación.
+    - Secuencia de cierre limpia en `VideoRenderer` asegurando que todos los recursos gráficos y pipelines se destruyan antes de desmantelar el dispositivo lógico Vulkan.
+
+- **Resultados de Verificación y Métricas:**
+  - **90/90 pruebas unitarias aprobadas (100% de éxito)** en configuraciones **Debug** y **Release** bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - **Estado de importaciones P0:** 261 símbolos P0 presentes en el binario; **0 símbolos P0 pendientes de resolución** (100% de la capa crítica P0 resuelta).
+  - **Total de importaciones sin resolver:** reducido a 264 en todo el ejecutable de 38.2 MB.
+  - **Prueba de arranque (`launcher.exe --headless --boot --timeout=3000`):**
+    - Carga y mapeo del ejecutable en `0x1000000000`, 303,268 slots de relocalización procesados.
+    - Apertura de display virtual 1080p con 3 buffers de presentación y sincronización Equeue.
+    - Reserva y mapeo exitoso de más de 3.3 GB de memoria directa.
+    - Lanzamiento de hilos del motor: `FontTextureDeleteThread`, `JobSyncSema`, `BackgroundFiber`, `FIOS2Driver`, `Spooler`.
+    - Inicialización de PlayGo (caching episodio 0) y streaming de recursos FIOS2 montando `/app0/arc/arc_0_ep_0_0.psarc`.
+    - Cuatro ciclos continuos de intercambio de buffers (`hle_sceVideoOutSubmitFlip`: 1 -> 2 -> 0 -> 1) ejecutados fluidamente y sin trampas de excepción.
+
 ## 2026-10-24 — Lote Libc, Kernel P0 y Variables de Condición (Reducción de No Resueltos a 324)
 
 - **Objetivo:** Completar la capa de emulación HLE de la biblioteca estándar (`libc`), soporte Dinkumware C++, `libkernel` (variables de condición `pthread_cond`, atomics, TLS `__tls_get_addr`), gestión de heaps aislados (`sceLibcMspace*`) y streams estándar para evitar trampas de diagnóstico durante la inicialización del motor.

@@ -76,6 +76,12 @@ int main() {
                     loadRes.num_relocations);
 
         std::printf("Inspection only: %zu unresolved imports; guest execution disabled.\n", loadRes.unresolved_symbols.size());
+        {
+            std::ofstream unresOut("unresolved_fresh.txt");
+            for (const auto& sym : loadRes.unresolved_symbols) {
+                unresOut << sym << "\n";
+            }
+        }
         const auto* opcodes = reinterpret_cast<const std::uint8_t*>(loadRes.entry);
         std::printf("Entry point machine code: %02x %02x %02x %02x\n",
                     opcodes[0], opcodes[1], opcodes[2], opcodes[3]);

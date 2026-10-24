@@ -10,7 +10,7 @@ eboot.bin
 /out/
 /bin/
 /user/
-savedata/
+/savedata/
 __pycache__/
 *.log
 *.raw
