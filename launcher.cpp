@@ -26,14 +26,18 @@ int main(int argc, char* argv[]) try {
         if (arg == "--strict") strict = true;
         else if (arg == "--headless") headless = true;
         else if (arg == "--boot" || arg == "--run") boot = true;
-        else if (arg.starts_with("--timeout=")) {
+        else if (arg == "--play" || arg == "--interactive") {
+            boot = true;
+            timeout_ms = 0; // Infinite interactive gameplay
+        } else if (arg.starts_with("--timeout=")) {
             const auto val = arg.substr(10);
             timeout_ms = static_cast<std::uint32_t>(std::stoul(std::string(val)));
         } else if (arg == "--help") {
-            std::cout << "Usage: launcher [--strict] [--headless] [--boot] [--timeout=<ms>]\n"
+            std::cout << "Usage: launcher [--strict] [--headless] [--boot] [--play] [--timeout=<ms>]\n"
                 "Inspects or boots the executable under isolated System V runner.\n"
-                "--boot: Executes guest entry point with diagnostic traps.\n"
-                "--timeout=<ms>: Sets execution timeout in milliseconds (default: 5000).\n"
+                "--boot: Executes guest entry point with diagnostic traps (default: 5000ms).\n"
+                "--play / --interactive: Runs live interactive session without timeout.\n"
+                "--timeout=<ms>: Sets execution timeout in milliseconds (0 for unlimited).\n"
                 "--strict rejects unresolved imports. --headless explicitly disables graphics.\n";
             return 0;
         } else {

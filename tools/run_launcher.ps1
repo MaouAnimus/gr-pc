@@ -1,24 +1,43 @@
 param(
+    [switch]$Play,
+    [switch]$Boot,
     [switch]$Headless,
     [switch]$Strict,
-    [switch]$Boot,
-    [int]$TimeoutMs = 0,
-    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
+    [uint32]$Timeout = 5000,
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
+    [string]$ToolchainBin = 'C:\msys64\clang64\bin'
 )
+
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$buildRoot = Join-Path $projectRoot "out\$($Configuration.ToLowerInvariant())"
+$launcherExe = Join-Path $buildRoot "launcher.exe"
+
+if (-not (Test-Path -LiteralPath $launcherExe)) {
+    throw "Launcher executable not found at: $launcherExe. Run tools\build_runtime.ps1 first."
+}
+
 $savedPath = $env:PATH
-$runtimeArguments = @()
-if ($Headless) { $runtimeArguments += '--headless' }
-if ($Strict) { $runtimeArguments += '--strict' }
-if ($Boot) { $runtimeArguments += '--boot' }
-if ($TimeoutMs -gt 0) { $runtimeArguments += "--timeout=$TimeoutMs" }
 try {
-    $env:PATH = "C:\msys64\clang64\bin;$savedPath"
+    $env:PATH = "$ToolchainBin;$savedPath"
+    $argsList = @()
+    if ($Play) {
+        $argsList += "--play"
+    } elseif ($Boot) {
+        $argsList += "--boot"
+        if ($Timeout -ne 5000) {
+            $argsList += "--timeout=$Timeout"
+        }
+    }
+    if ($Headless) { $argsList += "--headless" }
+    if ($Strict) { $argsList += "--strict" }
+
     Push-Location -LiteralPath $projectRoot
     try {
-        & rtk proxy "./out/$($Configuration.ToLowerInvariant())/launcher.exe" @runtimeArguments
-        $runtimeExitCode = $LASTEXITCODE
-    } finally { Pop-Location }
-} finally { $env:PATH = $savedPath }
-exit $runtimeExitCode
+        & $launcherExe @argsList
+    } finally {
+        Pop-Location
+    }
+} finally {
+    $env:PATH = $savedPath
+}

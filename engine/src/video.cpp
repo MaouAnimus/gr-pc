@@ -227,7 +227,12 @@ public:
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_EVENT_QUIT) {
-                    // Quit requested
+                    std::_Exit(0);
+                } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                    if (event.key.key == SDLK_F11 || (event.key.key == SDLK_RETURN && (event.key.mod & SDL_KMOD_ALT))) {
+                        Uint32 flags = SDL_GetWindowFlags(window_);
+                        SDL_SetWindowFullscreen(window_, (flags & SDL_WINDOW_FULLSCREEN) ? false : true);
+                    }
                 }
             }
         }

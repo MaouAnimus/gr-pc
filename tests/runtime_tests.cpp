@@ -552,6 +552,25 @@ void pad_tests() {
     CHECK(battery == 100);
     CHECK(!charging);
 
+    // Test controller information
+    ScePadControllerInformation info{};
+    CHECK(getControllerInformation(1, &info) == 0);
+    CHECK(info.touchPadResolutionX == 1920);
+    CHECK(info.touchPadResolutionY == 943);
+    CHECK(info.connected == 1);
+
+    // Test readPadData
+    OrbisPadData orbisData{};
+    CHECK(readPadData(1, &orbisData, 1) == 1);
+    CHECK(orbisData.connected == 1);
+    CHECK(orbisData.timestamp > 0);
+
+    // Test orientation reset
+    resetOrientation();
+
+    // Test rumble
+    CHECK(scePadSetRumble(0, 50, 100) == 0);
+
     CHECK(scePadEnd() == 0);
     // After end, calls return error
     CHECK(scePadGetState(0, &state) == -1);

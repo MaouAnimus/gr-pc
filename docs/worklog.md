@@ -1,3 +1,35 @@
+## 2026-10-24 — Hito 9: Lanzador Interactivo en Vivo, Gamepad Físico SDL3, Giroscopio Sixaxis y Touchpad Multipunto
+
+- **Objetivo:** Transformar la ejecución del entorno de ejecución de un arnés de prueba por timeout a una experiencia interactiva de juego en vivo (`--play` / `--interactive`), integrando soporte completo de mandos físicos (DualShock 4, DualSense, Xbox, DirectInput/XInput) vía SDL3 Gamepad, lectura de sensores Sixaxis (giroscopio por hardware con fallback suave a delta de ratón), touchpad táctil capacitivo de 2 puntos (coordenadas 1920x943 para cinemáticas interactivas estilo cómic y evasión por gravedad), y control de ventana (pantalla completa con `Alt+Enter` / `F11` y cierre limpio del proceso en `SDL_EVENT_QUIT`).
+
+- **Implementación HLE Detallada:**
+  - **Lanzador Interactivo y Runner Ilimitado (`launcher.cpp`, `engine/src/runner/runner.cpp`, `tools/run_launcher.ps1`):**
+    - Añadidos flags `--play` e `--interactive` al lanzador para ejecución continua indefinida con `timeout_ms = 0`.
+    - Ajustado `WaitForSingleObject` en `execute_isolated_sysv` para usar `INFINITE` (`0xFFFFFFFF`) cuando `timeout_ms == 0`, evitando terminaciones prematuras por timeout y permitiendo jugar sin límite de tiempo.
+    - Captura de eventos `SDL_EVENT_QUIT` en el ciclo de mensajes de vídeo (`engine/src/video.cpp`) con salida limpia del proceso mediante `std::_Exit(0)`.
+    - Atajos de pantalla completa en tiempo de ejecución: pulsación de `F11` o `Alt+Enter` alterna el modo pantalla completa (`SDL_SetWindowFullscreen`).
+    - Creado script de conveniencia `tools/run_launcher.ps1` que configura automáticamente el `PATH` hacia el toolchain de MSYS2/Clang64 y ejecuta en modo Debug o Release con `-Play`, `-Boot`, `-Headless`, etc.
+  - **Gamepad Físico SDL3 y Detección Automática (`engine/src/pad/pad.cpp`):**
+    - Inicialización de subsistema `SDL_INIT_GAMEPAD` y detección automática del primer mando disponible (`SDL_GetGamepads`, `SDL_OpenGamepad`).
+    - Mapeo completo de sticks analógicos (`SDL_GAMEPAD_AXIS_LEFTX/Y`, `SDL_GAMEPAD_AXIS_RIGHTX/Y`) con zonas muertas y escalado a 0..255.
+    - Mapeo de botones digitales: D-Pad (Up, Down, Left, Right), Face Buttons (Cruz, Círculo, Cuadrado, Triángulo), Hombros (L1, R1, L3, R3), y menús (Options -> START, Touchpad button -> SELECT).
+    - Gatillos analógicos L2 y R2 leídos con precisión analógica y umbral de activación digital (> 30).
+    - Soporte de vibración háptica mediante `SDL_RumbleGamepad` para retroalimentación en saltos y aterrizajes de gravedad.
+  - **Giroscopio Sixaxis por Hardware y Emulación de Ratón:**
+    - Detección de giroscopio físico en el mando (`SDL_GamepadSensorEnabled(g_gamepad, SDL_SENSOR_GYRO)`).
+    - Lectura de datos de rotación angular (`SDL_GetGamepadSensorData`) e integración continua de cuaternión unitario de orientación espacial.
+    - Fusión suave con deltas de ratón (filtro EMA y sensibilidad configurable) para apuntado de gravedad fluido tanto con mando como con teclado y ratón.
+  - **Touchpad Capacitivo de 2 Puntos:**
+    - Lectura de dedos en la superficie táctil del mando (`SDL_GetNumGamepadTouchpads`, `SDL_GetGamepadTouchpadFinger`).
+    - Mapeo y escalado de coordenadas táctiles al espacio nativo de PS4 (1920x943) para interacción fluida en cinemáticas de cómic y maniobras de gravedad.
+  - **Pruebas y Robustez:**
+    - Añadidas verificaciones en `tests/runtime_tests.cpp` para `getControllerInformation`, `readPadData`, `resetOrientation` y `scePadSetRumble`.
+    - Macro de aserción `CHECK` unificada e independiente de `-DNDEBUG`, garantizando cero advertencias de variables sin usar en Release bajo `-Wall -Wextra -Wpedantic -Werror`.
+
+- **Validación y Métricas:**
+  - **97/97 pruebas unitarias aprobadas (100% de éxito)** en configuraciones **Debug** (5.00s) y **Release** (3.63s).
+  - Verificada ejecución del script `tools/run_launcher.ps1` en modo inspección y en modo `--play`.
+
 ## 2026-10-24 — Hito 8: Resolución 100% de Capas P0/P1, Reproducción Multimedia (libSceAvPlayer), Eventos y Cómputo GNM, Síntesis de Sonido (libSceNgs2), Audio Espacial (libSceAudio3d) y Reloj del Sistema (libSceRtc)
 
 - **Objetivo:** Resolver la totalidad restante de las capas críticas de infraestructura P1 (46 símbolos) e incorporar soporte completo de reloj en tiempo real (`libSceRtc`), llevando el progreso de imports a **100% de símbolos P0 resueltos (0 pendientes)** y **100% de símbolos P1 resueltos (0 pendientes)**:

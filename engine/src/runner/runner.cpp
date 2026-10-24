@@ -286,12 +286,13 @@ ExecutionReport execute_isolated_sysv(
         return ctx.report;
     }
 
-    const DWORD wait_res = WaitForSingleObject(h_thread, config.timeout_ms);
+    const DWORD wait_time = (config.timeout_ms == 0) ? INFINITE : config.timeout_ms;
+    const DWORD wait_res = WaitForSingleObject(h_thread, wait_time);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - start
     );
 
-    if (wait_res == WAIT_TIMEOUT) {
+    if (wait_res == WAIT_TIMEOUT && config.timeout_ms > 0) {
         if (config.terminate_process_on_timeout) {
             ExecutionReport timeout_report;
             timeout_report.crash_reason = CrashReason::timeout;
