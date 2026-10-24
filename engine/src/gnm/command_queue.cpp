@@ -143,6 +143,12 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
         const auto scissor=n.scissor.value_or(VkRect2D{{0,0},extent});
         vkCmdSetViewport(cmd,0,1,&viewport);
         vkCmdSetScissor(cmd,0,1,&scissor);
+        if (n.has_dynamic_depth_cull) {
+            vkCmdSetCullMode(cmd, n.cull_mode);
+            vkCmdSetDepthTestEnable(cmd, n.depth_test_enable);
+            vkCmdSetDepthWriteEnable(cmd, n.depth_write_enable);
+            vkCmdSetDepthCompareOp(cmd, n.depth_compare_op);
+        }
         if (!n.vertex_buffers.empty()) vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(n.vertex_buffers.size()),n.vertex_buffers.data(),n.vertex_offsets.data());
         if (!n.descriptors.empty()) vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,n.layout,0,
             static_cast<std::uint32_t>(n.descriptors.size()),n.descriptors.data(),0,nullptr);
@@ -173,6 +179,25 @@ bool CommandQueue::acknowledge(RecordingTicket ticket) {
 void CommandQueue::abort(RecordingTicket ticket) {
     std::lock_guard lock(mutex_);
     if(ticket.id && ticket.owner==this && ticket.id==recording_.id) recording_={};
+}
+void CommandQueue::drain_headless() {
+    std::lock_guard lock(mutex_);
+    while (!batches_.empty()) {
+        const auto& batch = batches_.front();
+        for (const auto& cmd : batch.decoded.commands) {
+            if (const auto* reg = std::get_if<pm4::RegisterWrite>(&cmd.operation)) {
+                if (state_) {
+                    for (std::size_t i = 0; i < reg->values.size(); ++i) {
+                        state_->registers[reg->first + i] = reg->values[i];
+                    }
+                }
+            }
+        }
+        stats_.pending_words -= batch.decoded.word_count;
+        batches_.pop_front();
+        --stats_.pending;
+        ++stats_.submitted;
+    }
 }
 void CommandQueue::reset() {
     auto state=std::make_shared<GraphicsState>();

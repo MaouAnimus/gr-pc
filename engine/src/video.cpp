@@ -241,6 +241,8 @@ public:
         frame_pacer_.wait();
         if (!headless_ && device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE) {
             render_frame();
+        } else if (headless_) {
+            gnm::command_queue().drain_headless();
         }
     }
 

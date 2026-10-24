@@ -44,6 +44,11 @@ add_library(gravity_runtime STATIC
     engine/src/savedata/savedata.cpp
     engine/src/font/font.cpp
     engine/src/gnm/shader_pipeline.cpp
+    engine/src/gnm/gcn_decoder.cpp
+    engine/src/gnm/spirv_builder.cpp
+    engine/src/gnm/gcn_translator.cpp
+    engine/src/gnm/shader_cache.cpp
+    engine/src/gnm/texture_decoder.cpp
     engine/src/libc/libc.cpp
     engine/src/avplayer/avplayer.cpp
     engine/src/avplayer/mf_decoder.cpp
@@ -70,6 +75,34 @@ target_compile_options(gravity_runtime_probe PRIVATE -Wall -Wextra -Wpedantic -W
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(gcn_decoder_tests tests/gcn_decoder_tests.cpp)
+    target_link_libraries(gcn_decoder_tests PRIVATE gravity_runtime)
+    target_compile_options(gcn_decoder_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite scalar literals formats branches invalid limits)
+        add_test(NAME gcn_decoder_${suite} COMMAND gcn_decoder_tests ${suite})
+        set_tests_properties(gcn_decoder_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(gcn_translator_tests tests/gcn_translator_tests.cpp)
+    target_link_libraries(gcn_translator_tests PRIVATE gravity_runtime)
+    target_compile_options(gcn_translator_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite builder_empty builder_types builder_const builder_instr translate_vs translate_ps translate_alu translate_scalar translate_tex spirv_valid translate_invalid)
+        add_test(NAME gcn_translator_${suite} COMMAND gcn_translator_tests ${suite})
+        set_tests_properties(gcn_translator_${suite} PROPERTIES TIMEOUT 15)
+    endforeach()
+    add_executable(shader_cache_tests tests/shader_cache_tests.cpp)
+    target_link_libraries(shader_cache_tests PRIVATE gravity_runtime)
+    target_compile_options(shader_cache_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite roundtrip miss identity corruption truncation concurrent invalid failures)
+        add_test(NAME shader_cache_${suite} COMMAND shader_cache_tests ${suite})
+        set_tests_properties(shader_cache_${suite} PROPERTIES TIMEOUT 15)
+    endforeach()
+    add_executable(texture_decoder_tests tests/texture_decoder_tests.cpp)
+    target_link_libraries(texture_decoder_tests PRIVATE gravity_runtime)
+    target_compile_options(texture_decoder_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite morton format linear detile bc1 bc3 surface invalid)
+        add_test(NAME texture_decoder_${suite} COMMAND texture_decoder_tests ${suite})
+        set_tests_properties(texture_decoder_${suite} PROPERTIES TIMEOUT 15)
+    endforeach()
     add_executable(gravity_motion_tests tests/gravity_motion_tests.cpp)
     target_link_libraries(gravity_motion_tests PRIVATE gravity_runtime)
     target_compile_options(gravity_motion_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

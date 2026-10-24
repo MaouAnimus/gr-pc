@@ -1,6 +1,9 @@
 #include "hle/gnm/shader_pipeline.h"
 #include "hle/guest_memory.h"
 #include "hle/avplayer/avplayer.h"
+#include "hle/gnm/gcn_decoder.h"
+#include "hle/gnm/gcn_translator.h"
+#include "hle/gnm/texture_decoder.h"
 #include <array>
 #include <vector>
 #include <cstring>
@@ -119,7 +122,12 @@ bool VulkanShaderPipeline::create_linear_texture(uint32_t width, uint32_t height
         return false;
     }
 
-    const size_t byte_count = static_cast<size_t>(width) * height * 4;
+    size_t bpp = 4;
+    if (format == VK_FORMAT_R8_UNORM) bpp = 1;
+    else if (format == VK_FORMAT_R8G8_UNORM || format == VK_FORMAT_R16_UNORM) bpp = 2;
+    else if (format == VK_FORMAT_R16G16B16A16_SFLOAT) bpp = 8;
+    else if (format == VK_FORMAT_R32G32B32A32_SFLOAT) bpp = 16;
+    const size_t byte_count = static_cast<size_t>(width) * height * bpp;
     void* mapped = nullptr;
     if (vkMapMemory(device_, out.memory, 0, (std::min)(req.size, static_cast<VkDeviceSize>(byte_count)), 0, &mapped) == VK_SUCCESS) {
         if (pixels) {
@@ -182,7 +190,7 @@ bool VulkanShaderPipeline::create_linear_texture(uint32_t width, uint32_t height
     return true;
 }
 
-VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format) {
+VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format, uint32_t tiling) {
     if (!guest_addr || !width || !height) return default_descriptor_set_;
 
     if (video_slot_ < video_slots_.size()) {
@@ -199,17 +207,42 @@ VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr,
         return it->second.descriptor_set;
     }
 
-    const size_t byte_count = static_cast<size_t>(width) * height * 4;
-    if (!guest_memory::accessible(reinterpret_cast<const void*>(guest_addr), byte_count, false)) {
+    const auto fmt_info = decode_gcn_format(format);
+    const size_t raw_byte_count = static_cast<size_t>((width + fmt_info.block_dim - 1) / fmt_info.block_dim) *
+                                  ((height + fmt_info.block_dim - 1) / fmt_info.block_dim) * fmt_info.bytes_per_block;
+
+    if (!guest_memory::accessible(reinterpret_cast<const void*>(guest_addr), raw_byte_count, false)) {
         return default_descriptor_set_;
+    }
+
+    std::vector<uint8_t> linear_data;
+    const void* upload_pixels = reinterpret_cast<const void*>(guest_addr);
+    const TextureTiling tile_mode = (tiling == 0) ? TextureTiling::Linear : TextureTiling::Tiled2D;
+
+    if (tile_mode != TextureTiling::Linear) {
+        linear_data.resize(raw_byte_count);
+        if (detile_surface(upload_pixels, linear_data.data(), width, height, fmt_info, tile_mode)) {
+            upload_pixels = linear_data.data();
+        }
+    }
+
+    VkFormat upload_format = fmt_info.vk_format;
+    std::vector<uint8_t> decompressed_data;
+
+    if (fmt_info.is_block_compressed) {
+        const size_t rgba_bytes = static_cast<size_t>(width) * height * 4;
+        decompressed_data.resize(rgba_bytes);
+        if (decompress_bc_to_rgba8(upload_pixels, decompressed_data.data(), width, height, fmt_info.vk_format)) {
+            upload_pixels = decompressed_data.data();
+            upload_format = VK_FORMAT_R8G8B8A8_UNORM;
+        }
     }
 
     CachedTexture tex{};
     tex.guest_addr = guest_addr;
     tex.format = format;
-    VkFormat vk_fmt = VK_FORMAT_R8G8B8A8_UNORM;
 
-    if (!create_linear_texture(width, height, vk_fmt, reinterpret_cast<const void*>(guest_addr), tex)) {
+    if (!create_linear_texture(width, height, upload_format, upload_pixels, tex)) {
         return default_descriptor_set_;
     }
 
@@ -384,15 +417,30 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
     }
 
     // 9. Build Graphics Pipeline with Dynamic Rendering
+    color_format_ = colorFormat;
+    pipeline_ = create_pipeline_for_shaders(vert_module_, frag_module_, layout_);
+    if (pipeline_ == VK_NULL_HANDLE) {
+        shutdown();
+        return false;
+    }
+
+    return true;
+}
+
+VkPipeline VulkanShaderPipeline::create_pipeline_for_shaders(VkShaderModule vs, VkShaderModule ps, VkPipelineLayout layout) {
+    if (!device_ || vs == VK_NULL_HANDLE || ps == VK_NULL_HANDLE || layout == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vert_module_;
+    stages[0].module = vs;
     stages[0].pName = "main";
 
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = frag_module_;
+    stages[1].module = ps;
     stages[1].pName = "main";
 
     // Vertex input description
@@ -466,19 +514,31 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
     cb.attachmentCount = 1;
     cb.pAttachments = &cb_attach;
 
+    VkPipelineDepthStencilStateCreateInfo dss{};
+    dss.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    dss.depthTestEnable = VK_FALSE;
+    dss.depthWriteEnable = VK_FALSE;
+    dss.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    dss.depthBoundsTestEnable = VK_FALSE;
+    dss.stencilTestEnable = VK_FALSE;
+
     const VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
+        VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_CULL_MODE,
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP
     };
     VkPipelineDynamicStateCreateInfo ds{};
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    ds.dynamicStateCount = 2;
+    ds.dynamicStateCount = 6;
     ds.pDynamicStates = dynamic_states;
 
     VkPipelineRenderingCreateInfo rendering_ci{};
     rendering_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     rendering_ci.colorAttachmentCount = 1;
-    rendering_ci.pColorAttachmentFormats = &colorFormat;
+    rendering_ci.pColorAttachmentFormats = &color_format_;
 
     VkGraphicsPipelineCreateInfo pipeline_ci{};
     pipeline_ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -490,22 +550,130 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
     pipeline_ci.pViewportState = &vp;
     pipeline_ci.pRasterizationState = &rs;
     pipeline_ci.pMultisampleState = &ms;
+    pipeline_ci.pDepthStencilState = &dss;
     pipeline_ci.pColorBlendState = &cb;
     pipeline_ci.pDynamicState = &ds;
-    pipeline_ci.layout = layout_;
+    pipeline_ci.layout = layout;
     pipeline_ci.renderPass = VK_NULL_HANDLE;
 
-    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_ci, nullptr, &pipeline_) != VK_SUCCESS) {
-        shutdown();
-        return false;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_ci, nullptr, &pipe) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
+    return pipe;
+}
+
+VulkanShaderPipeline::DynamicPipeline* VulkanShaderPipeline::get_or_create_dynamic_pipeline(uint64_t vs_addr, uint64_t ps_addr) {
+    if (!device_ || !vs_addr || !ps_addr) return nullptr;
+
+    const uint64_t key = vs_addr ^ (ps_addr << 16);
+    auto it = dynamic_pipelines_.find(key);
+    if (it != dynamic_pipelines_.end()) {
+        return &it->second;
     }
 
-    return true;
+    auto fetch_or_translate = [this](uint64_t addr, gcn::Stage stage) -> std::vector<uint32_t> {
+        std::vector<uint32_t> gcn_words;
+        constexpr size_t max_words = 4096;
+        for (size_t i = 0; i < max_words; ++i) {
+            uint64_t ptr = addr + i * sizeof(uint32_t);
+            if (!guest_memory::accessible(reinterpret_cast<const void*>(ptr), sizeof(uint32_t), false)) {
+                break;
+            }
+            uint32_t w = *reinterpret_cast<const uint32_t*>(ptr);
+            gcn_words.push_back(w);
+            if (w == 0xbf810000u) {
+                break;
+            }
+        }
+        if (gcn_words.empty() || gcn_words.back() != 0xbf810000u) {
+            return {};
+        }
+
+        std::span<const uint8_t> byte_span(reinterpret_cast<const uint8_t*>(gcn_words.data()), gcn_words.size() * sizeof(uint32_t));
+        std::string cache_key = ShaderCache::key_for(byte_span, stage == gcn::Stage::Vertex ? "vs:v1" : "ps:v1");
+        if (!cache_key.empty()) {
+            auto cached = shader_cache_.load(cache_key);
+            if (cached.has_value() && !cached->empty()) {
+                return std::move(*cached);
+            }
+        }
+
+        auto program = gcn::decode(gcn_words);
+        if (!program.diagnostic) {
+            return {};
+        }
+
+        gcn::TranslateConfig cfg;
+        cfg.stage = stage;
+        cfg.num_sgprs = 32;
+        cfg.num_vgprs = 32;
+        cfg.num_textures = 1;
+        auto result = gcn::translate(program, cfg);
+        if (!result.success || result.spirv.empty()) {
+            return {};
+        }
+
+        if (!cache_key.empty()) {
+            (void)shader_cache_.store(cache_key, result.spirv);
+        }
+        return result.spirv;
+    };
+
+    auto vs_spv = fetch_or_translate(vs_addr, gcn::Stage::Vertex);
+    auto ps_spv = fetch_or_translate(ps_addr, gcn::Stage::Fragment);
+    if (vs_spv.empty() || ps_spv.empty()) {
+        return nullptr;
+    }
+
+    VkShaderModuleCreateInfo vs_ci{};
+    vs_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    vs_ci.codeSize = vs_spv.size() * sizeof(uint32_t);
+    vs_ci.pCode = vs_spv.data();
+    VkShaderModule vs_mod = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device_, &vs_ci, nullptr, &vs_mod) != VK_SUCCESS) {
+        return nullptr;
+    }
+
+    VkShaderModuleCreateInfo ps_ci{};
+    ps_ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ps_ci.codeSize = ps_spv.size() * sizeof(uint32_t);
+    ps_ci.pCode = ps_spv.data();
+    VkShaderModule ps_mod = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device_, &ps_ci, nullptr, &ps_mod) != VK_SUCCESS) {
+        vkDestroyShaderModule(device_, vs_mod, nullptr);
+        return nullptr;
+    }
+
+    VkPipeline pipe = create_pipeline_for_shaders(vs_mod, ps_mod, layout_);
+    if (pipe == VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device_, ps_mod, nullptr);
+        vkDestroyShaderModule(device_, vs_mod, nullptr);
+        return nullptr;
+    }
+
+    DynamicPipeline dyn;
+    dyn.pipeline = pipe;
+    dyn.layout = layout_;
+    dyn.vs_module = vs_mod;
+    dyn.ps_module = ps_mod;
+
+    auto [emplaced_it, _] = dynamic_pipelines_.emplace(key, dyn);
+    return &emplaced_it->second;
 }
+
 
 void VulkanShaderPipeline::shutdown() {
     reset_video_textures();
     if (device_ != VK_NULL_HANDLE) {
+        for (auto& [key, pipe] : dynamic_pipelines_) {
+            (void)key;
+            if (pipe.pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipe.pipeline, nullptr);
+            if (pipe.vs_module != VK_NULL_HANDLE) vkDestroyShaderModule(device_, pipe.vs_module, nullptr);
+            if (pipe.ps_module != VK_NULL_HANDLE) vkDestroyShaderModule(device_, pipe.ps_module, nullptr);
+        }
+        dynamic_pipelines_.clear();
+
         for (auto& [addr, tex] : texture_cache_) {
             (void)addr;
             if (tex.view != VK_NULL_HANDLE) vkDestroyImageView(device_, tex.view, nullptr);
@@ -586,33 +754,82 @@ DrawResolver VulkanShaderPipeline::get_resolver() {
         native.pipeline = pipeline_;
         native.layout = layout_;
 
-        // 1. Texture resolution from SPI_SHADER_USER_DATA_PS (e.g. 0x2C10)
-        uint64_t tex_addr = 0;
-        uint32_t tex_w = 0, tex_h = 0, tex_fmt = 0;
-        const uint32_t dw0 = state.registers[0x2c10];
-        const uint32_t dw1 = state.registers[0x2c11];
-        const uint32_t dw2 = state.registers[0x2c12];
-        if (dw0 != 0 && dw2 != 0) {
-            tex_addr = (static_cast<uint64_t>(dw0) << 8) | (static_cast<uint64_t>(dw1 & 0xFF) << 40);
-            tex_w = (dw2 & 0x3FFF) + 1;
-            tex_h = ((dw2 >> 14) & 0x3FFF) + 1;
-            tex_fmt = (dw1 >> 20) & 0x3F;
+        // 1. Dynamic GCN Shader Translation & Pipeline Selection
+        uint64_t vs_addr = 0;
+        uint64_t ps_addr = 0;
+        const uint32_t vs_lo = state.registers[0x2c48];
+        const uint32_t vs_hi = state.registers[0x2c49];
+        if (vs_lo != 0 || vs_hi != 0) {
+            vs_addr = (static_cast<uint64_t>(vs_hi) << 40) | (static_cast<uint64_t>(vs_lo) << 8);
+        }
+        const uint32_t ps_lo = state.registers[0x2c08];
+        const uint32_t ps_hi = state.registers[0x2c09];
+        if (ps_lo != 0 || ps_hi != 0) {
+            ps_addr = (static_cast<uint64_t>(ps_hi) << 40) | (static_cast<uint64_t>(ps_lo) << 8);
         }
 
+        if (vs_addr != 0 && ps_addr != 0) {
+            auto* dyn = get_or_create_dynamic_pipeline(vs_addr, ps_addr);
+            if (dyn) {
+                native.pipeline = dyn->pipeline;
+                native.layout = dyn->layout;
+            }
+        }
+
+        // 2. Texture resolution from SPI_SHADER_USER_DATA_PS (T# descriptors)
         VkDescriptorSet ds = default_descriptor_set_;
-        if (tex_addr != 0 && tex_w > 0 && tex_h > 0) {
-            ds = get_or_create_texture(tex_addr, tex_w, tex_h, tex_fmt);
+        for (uint32_t slot = 0x2c0c; slot + 3 <= 0x2c1b; slot += 4) {
+            const uint32_t dw0 = state.registers[slot];
+            const uint32_t dw1 = state.registers[slot + 1];
+            const uint32_t dw2 = state.registers[slot + 2];
+            const uint32_t dw3 = state.registers[slot + 3];
+            if (dw0 != 0 && dw2 != 0) {
+                uint64_t tex_addr = (static_cast<uint64_t>(dw0) << 8) | (static_cast<uint64_t>(dw1 & 0xFF) << 40);
+                uint32_t tex_w = (dw2 & 0x3FFF) + 1;
+                uint32_t tex_h = ((dw2 >> 14) & 0x3FFF) + 1;
+                uint32_t tex_fmt = (dw1 >> 20) & 0x3F;
+                uint32_t tiling = (dw3 >> 16) & 0xF;
+                if (tex_addr != 0 && tex_w > 0 && tex_h > 0) {
+                    VkDescriptorSet candidate = get_or_create_texture(tex_addr, tex_w, tex_h, tex_fmt, tiling);
+                    if (candidate != VK_NULL_HANDLE) {
+                        ds = candidate;
+                        break;
+                    }
+                }
+            }
         }
         if (ds != VK_NULL_HANDLE) {
             native.descriptors = { ds };
         }
 
-        // 2. Vertex Buffer binding
+        // 3. Vertex Buffer binding (V# descriptors in SPI_SHADER_USER_DATA_VS)
+        bool found_vbuf = false;
+        for (uint32_t slot = 0x2c4c; slot + 3 <= 0x2c5b; slot += 4) {
+            const uint32_t dw0 = state.registers[slot];
+            const uint32_t dw1 = state.registers[slot + 1];
+            const uint32_t dw2 = state.registers[slot + 2];
+            if (dw0 != 0 && dw2 != 0) {
+                uint64_t vbuf_addr = (static_cast<uint64_t>(dw1 & 0xFFFF) << 32) | dw0;
+                uint32_t stride = (dw1 >> 16) & 0x3FFF;
+                uint32_t num_records = dw2;
+                size_t total_bytes = stride > 0 ? static_cast<size_t>(stride) * num_records : static_cast<size_t>(num_records);
+                if (vbuf_addr != 0 && total_bytes > 0 && guest_memory::accessible(reinterpret_cast<const void*>(vbuf_addr), (std::min)(total_bytes, static_cast<size_t>(vertex_buffer_size_)), false)) {
+                    void* mapped = nullptr;
+                    if (vkMapMemory(device_, vertex_memory_, 0, (std::min)(static_cast<VkDeviceSize>(total_bytes), vertex_buffer_size_), 0, &mapped) == VK_SUCCESS) {
+                        std::memcpy(mapped, reinterpret_cast<const void*>(vbuf_addr), (std::min)(static_cast<VkDeviceSize>(total_bytes), vertex_buffer_size_));
+                        vkUnmapMemory(device_, vertex_memory_);
+                        found_vbuf = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         native.vertex_buffers = { vertex_buffer_ };
         native.vertex_offsets = { 0 };
 
-        // 3. Dynamic Quad/Color updating
-        if (!request.indexed && request.count == 4) {
+        // 4. Dynamic Quad/Color updating fallback if no V# buffer found
+        if (!found_vbuf && !request.indexed && request.count == 4) {
             float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
             const uint64_t color_ptr = state.registers[0x2c54];
             if (color_ptr && guest_memory::accessible(reinterpret_cast<const void*>(color_ptr), 16, false)) {
@@ -632,7 +849,7 @@ DrawResolver VulkanShaderPipeline::get_resolver() {
             }
         }
 
-        // 4. Index Buffer resolution
+        // 5. Index Buffer resolution
         if (request.indexed) {
             const auto elem_size = request.index32 ? 4U : 2U;
             const auto req_bytes = static_cast<VkDeviceSize>(request.first_index + request.count) * elem_size;
@@ -648,10 +865,30 @@ DrawResolver VulkanShaderPipeline::get_resolver() {
             native.index_bytes = index_buffer_size_;
         }
 
-        // 5. Dynamic Viewport / Scissor: let CommandQueue default to active target extent
-        // unless a sub-rect scissor/viewport is specifically required within bounds.
+        // 6. Dynamic Viewport / Scissor
         native.viewport = std::nullopt;
         native.scissor = std::nullopt;
+
+        // 7. Dynamic Depth / Stencil / Cull states
+        native.has_dynamic_depth_cull = true;
+        const uint32_t pa_su_sc_mode = state.registers[0xA205];
+        const bool cull_front = (pa_su_sc_mode & 1u) != 0;
+        const bool cull_back = (pa_su_sc_mode & 2u) != 0;
+        if (cull_front && cull_back) {
+            native.cull_mode = VK_CULL_MODE_FRONT_AND_BACK;
+        } else if (cull_front) {
+            native.cull_mode = VK_CULL_MODE_FRONT_BIT;
+        } else if (cull_back) {
+            native.cull_mode = VK_CULL_MODE_BACK_BIT;
+        } else {
+            native.cull_mode = VK_CULL_MODE_NONE;
+        }
+
+        const uint32_t db_depth_cntl = state.registers[0xA200];
+        native.depth_test_enable = ((db_depth_cntl >> 1) & 1u) ? VK_TRUE : VK_FALSE;
+        native.depth_write_enable = ((db_depth_cntl >> 2) & 1u) ? VK_TRUE : VK_FALSE;
+        const uint32_t zfunc = (db_depth_cntl >> 4) & 7u;
+        native.depth_compare_op = (db_depth_cntl != 0) ? static_cast<VkCompareOp>(zfunc) : VK_COMPARE_OP_LESS_OR_EQUAL;
 
         return true;
     };

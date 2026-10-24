@@ -1,3 +1,39 @@
+## 2026-10-24 — Paso 5: Pipeline Gráfico GCN → SPIR-V, Emisor SPIR-V, Caché en Disco y Extracción Real de Descriptores V# y T#
+
+- **Objetivo:** Implementar la infraestructura de generación y enlace de shaders GCN a Vulkan SPIR-V en tiempo de ejecución: decodificación ISA Sea Islands, emisor binario SPIR-V (`spirv_builder`), traductor GCN→SPIR-V con cobertura de registros escalares/vectoriales/control de flujo (`gcn_translator`), sistema de caché en disco `.spv_cache` con validación SHA-256 contra corrupción/concurrencia, y enlace dinámico de pipelines en `VulkanShaderPipeline` con extracción de buffers de vértices (V#) y texturas (T#) desde registros de contexto `SPI_SHADER_USER_DATA_*`.
+
+- **Implementación HLE Detallada:**
+  - **Decodificador ISA GCN Sea Islands (`engine/src/gnm/gcn_decoder.cpp`, `engine/include/hle/gnm/gcn_decoder.h`):**
+    - Clasificación exhaustiva de formatos de microcódigo GCN: `SOP1`, `SOP2`, `SOPK`, `SOPC`, `SOPP`, `VOP1`, `VOP2`, `VOP3`, `VOPC`, `VINTRP`, `DS`, `MUBUF`, `MTBUF`, `MIMG`, `EXP`.
+    - Detección precisa de literales de 32 bits, palabras múltiples y análisis de ramas relativas asegurando límites válidos de flujo y detección obligatoria del terminador `S_ENDPGM`.
+  - **Emisor Binario SPIR-V (`engine/src/gnm/spirv_builder.cpp`, `engine/include/hle/gnm/spirv_builder.h`):**
+    - Construcción en memoria de módulos SPIR-V 1.5 con cabecera estándar (Magic `0x07230203`, Version `0x00010500`, Bound dinámico).
+    - Deduplicación automática de tipos escalares, vectoriales, matrices, punteros y tipos compuestos.
+    - Soporte completo de instrucciones Op (MemoryModel, EntryPoint, ExecutionMode, Decorate, Variables, Load/Store, Composite, Operaciones ALU de coma flotante y enteras, bifurcaciones de control de flujo y retorno).
+  - **Traductor GCN → SPIR-V (`engine/src/gnm/gcn_translator.cpp`, `engine/include/hle/gnm/gcn_translator.h`):**
+    - Mapeo de banco de registros escalares (`s0..s103`) y vectoriales (`v0..v255`) a variables locales en memoria de función SPIR-V.
+    - Soporte de constantes inline (-16..64, floats ±0.5, ±1.0, ±2.0, ±4.0), registros especiales (`VCC`, `EXEC`, `SCC`).
+    - Traducción de instrucciones ALU vectoriales (`v_mov`, `v_add_f32`, `v_mul_f32`, `v_mad_f32`, etc.).
+    - Desempaquetado exacto de instrucciones `EXP` según el estándar AMD Sea Islands: máscara `EN` (bits [3:0]), selector `TARGET` (bits [9:4]: `MRT0..7` [0..7], `POS0..3` [12..15], `PARAM0..31` [32..63]), flag de compresión `COMPR` y bit `DONE`.
+    - Mapeo de salidas de vértice (`gl_Position`, varyings) y salidas de fragmento (`FragColor`).
+  - **Caché de Shaders en Disco (`engine/src/gnm/shader_cache.cpp`, `engine/include/hle/gnm/shader_cache.h`):**
+    - Almacenamiento seguro bajo `.spv_cache/` indexado mediante claves de hash SHA-256 (`BCryptCreateHash` en Windows).
+    - Verificación estricta de integridad de 4 pasos (mínimo de palabras SPIR-V, Magic exacto, Version >= 1.0, Schema nulo y correspondencia de Bound).
+    - Escritura atómica concurrente vía archivo temporal con reemplazo atómico `std::filesystem::rename` para prevenir condiciones de carrera.
+  - **Integración en `VulkanShaderPipeline` (`engine/src/gnm/shader_pipeline.cpp`, `engine/include/hle/gnm/shader_pipeline.h`):**
+    - Detección de direcciones de programas shader de vértice (`SPI_SHADER_PGM_LO_VS` / `HI_VS` en `0x2c48..0x2c49`) y píxel (`SPI_SHADER_PGM_LO_PS` / `HI_PS` en `0x2c08..0x2c09`).
+    - Decodificación y traducción bajo demanda con consulta prioritaria al caché en disco (`.spv_cache`) y compilación síncrona de `VkPipeline` con renderizado dinámico Vulkan 1.3.
+    - Extracción de descriptores de búfer de vértices V# (16 bytes por ranura en `0x2c4c..0x2c5b`), extrayendo dirección base, stride y recuento de registros, enlazando directamente con la memoria de vértices.
+    - Extracción de descriptores de textura T# (32 bytes por ranura en `0x2c0c..0x2c1b`), decodificando dimensiones, formato y dirección base hacia la caché de texturas.
+    - Fallback transparente hacia el pipeline estático base en ausencia de programas GCN o descriptores válidos, garantizando compatibilidad total con pruebas existentes.
+
+- **Validación y Métricas:**
+  - **148/148 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (37.01s) como en **Release** (10.15s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - **25 pruebas especializadas de pipeline de shaders:**
+    - 6 pruebas en `gcn_decoder_*`: `scalar`, `literals`, `formats`, `branches`, `invalid`, `limits`.
+    - 11 pruebas en `gcn_translator_*`: `builder_empty`, `builder_types`, `builder_const`, `builder_instr`, `translate_vs`, `translate_ps`, `translate_alu`, `translate_scalar`, `translate_tex`, `spirv_valid`, `translate_invalid`.
+    - 8 pruebas en `shader_cache_*`: `roundtrip`, `miss`, `identity`, `corruption`, `truncation`, `concurrent`, `invalid`, `failures`.
+
 ## 2026-10-24 — Paso 4: Físicas Havok, Sincronización Gravitacional 360°, Event Flags y Temporización de 60 Hz
 
 - **Objetivo:** Implementar y verificar los componentes críticos de sincronización y físicas para la jugabilidad: Event Flags del kernel de Sony (`libkernel`), temporización fija a 60 Hz (`FramePacer` y `FixedStepDriver`), sincronización de relojes TSC e instrucciones `rdtsc` invitadas, y simulación cinemática gravitacional 360° con detección continua de colisiones (CCD) anti-tunneling.
@@ -539,3 +575,51 @@ exportaciones sin nombre: 539 identidades y 142 nombres pendientes de 681.
   - Actualizado `VideoRenderer::render_frame()` para presentar el fondo azul cómic cel-shaded característico de Kat (`0.05f, 0.05f, 0.08f, 1.0f`) a 60 FPS de forma ininterrumpida mientras la traducción de shaders GCN se encuentra en progreso, evitando paradas artificiales del hilo gráfico.
   - Verificado en ejecuciones de 5 y 10 segundos ininterrumpidos: **cero cuelgues, cero violaciones de acceso y cero excepciones nativas**.
   - Total de pruebas automáticas: **76/76 suites aprobadas al 100%** en Debug y Release con política estricta de cero advertencias (`-Wall -Wextra -Wpedantic -Werror`).
+
+## 2026-10-24 — Hito Mayor: Traductor Dinámico GCN a SPIR-V, SPIR-V Module Builder y Shader Cache Atómico en Disco
+
+- **Decodificador de Instrucciones AMD GCN Sea Islands (`gcn_decoder`):**
+  - Implementado decodificador modular en [gcn_decoder.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/gnm/gcn_decoder.h) y [gcn_decoder.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/gcn_decoder.cpp) para formatos SOPP, SOP2, SOPK, SOP1, SOPC, VOP1, VOP2, VOP3A, VOP3B, VOPC, SMEM, DS y EXP.
+  - Soporte completo para lit_const, operandos inline (`-16..64`, `0.5`, `-0.5`, `1.0`, `-1.0`, `2.0`, `-2.0`, `4.0`, `-4.0`), `s_endpgm` (`0xbf810000`), saltos relativos `s_branch`/`s_cbranch` y exports de fragmento/vértice.
+  - Validación exhaustiva: 6 suites unitarias dedicadas en [gcn_decoder_tests.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/tests/gcn_decoder_tests.cpp) aprobadas al 100%.
+
+- **Constructor SPIR-V en Memoria (`spirv_builder`):**
+  - Implementado [spirv_builder.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/gnm/spirv_builder.h) y [spirv_builder.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/spirv_builder.cpp) generando binarios SPIR-V 1.5 válidos.
+  - Soporte para capacidades `Shader`, modelo de memoria `GLSL450`, decoraciones `Location`, `BuiltIn` (`Position`, `FragCoord`), variables de interfaz de entrada/salida y bloques de funciones con `OpReturn`.
+
+- **Traductor de Shaders GCN a SPIR-V (`gcn_translator`):**
+  - Implementado [gcn_translator.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/gnm/gcn_translator.h) y [gcn_translator.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/gcn_translator.cpp) para Vertex y Fragment stages.
+  - Mapeo de VGPRs a variables locales SPIR-V, decodificación fiel de exports Sea Islands EXP (`MRT 0..7` en destinos 0..7, `POS 0..3` en destinos 12..15, `PARAM 0..31` en destinos 32..63 con `en` en bits [3:0] y `target` en bits [9:4]).
+  - Traducción de instrucciones vectoriales (`v_mov_b32`, `v_add_f32`, `v_mul_f32`, `v_mac_f32`, etc.) y muestreo de texturas `IMAGE_SAMPLE`.
+  - 11 suites unitarias en [gcn_translator_tests.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/tests/gcn_translator_tests.cpp) aprobadas al 100%.
+
+- **Caché en Disco Atómico e Integridad SHA-256 (`shader_cache`):**
+  - Implementado [shader_cache.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/gnm/shader_cache.h) y [shader_cache.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/shader_cache.cpp) con almacenamiento en directorio `.spv_cache`.
+  - Reemplazo atómico con `MoveFileExW` / `REPLACE_EXISTING`, cabecera mágica `GRSP`, versión de formato y checksum SHA-256 para prevenir escrituras concurrentes o lecturas corruptas.
+  - 8 suites unitarias en [shader_cache_tests.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/tests/shader_cache_tests.cpp) aprobadas al 100%.
+
+## 2026-10-24 — Hito Mayor: Decodificador de Texturas Morton 2D, Descompresión BC1/BC3 y Pipeline de Estados Dinámicos de Render (Cull/Depth/Compare)
+
+- **Módulo de Decodificación y Detiling de Texturas (`texture_decoder`):**
+  - Diseñado e implementado [texture_decoder.h](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/include/hle/gnm/texture_decoder.h) y [texture_decoder.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/texture_decoder.cpp) para el tratamiento de texturas nativas del motor de Gravity Rush:
+    - Función constexpr `morton_2d(x, y)` implementando el desentrelazado de bits Z-order para micro-tiles 8x8 de AMD Sea Islands (GCN).
+    - Decodificador de formatos GCN de 6 bits a `VkFormat` con soporte para RGBA8, R8, RG8, R16, RGBA16F, RGBA32F, BC1, BC2, BC3, BC4, BC5, BC6 y BC7.
+    - Algoritmo de `detile_surface` que reconstruye la disposición lineal continua a partir de layouts micro-tiled 2D de GPU.
+    - Descompresor CPU optimizado `decompress_bc1_block` y `decompress_bc3_block` que convierte bloques de compresión de bloques DirectX/Orbis a píxeles directos RGBA8 con interpolación cromática 565 de alta precisión e interpolación de canal alfa de 8 valores.
+    - 8 suites de pruebas unitarias en [texture_decoder_tests.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/tests/texture_decoder_tests.cpp) verificando biyección completa de 64 coordenadas, decodificación de formatos, passthrough lineal, detiling y descompresión de superficies.
+
+- **Integración de Estados Dinámicos de Cull y Profundidad en Vulkan (`shader_pipeline`):**
+  - Actualizado [shader_pipeline.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/shader_pipeline.cpp) para registrar estados dinámicos `VK_DYNAMIC_STATE_CULL_MODE`, `VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE`, `VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE` y `VK_DYNAMIC_STATE_DEPTH_COMPARE_OP` en la creación de pipelines gráficos.
+  - Extracción en caliente de la configuración de renderizado a partir de los registros de hardware del procesador de comandos PM4:
+    - Registro `0xA205` (`PA_SU_SC_MODE_CNTL`, offset 0x28814): Decodifica `CULL_FRONT` (bit 0) y `CULL_BACK` (bit 1) para programar `vkCmdSetCullMode`.
+    - Registro `0xA200` (`DB_DEPTH_CONTROL`, offset 0x28800): Decodifica `Z_ENABLE` (bit 1), `Z_WRITE_ENABLE` (bit 2) y la función de comparación `ZFUNC` (bits [6:4]), mapeada 1:1 sobre `VkCompareOp`.
+  - Integración en `get_or_create_texture` para desempaquetar el modo de tiling (DWORD 3 del descriptor T#) y aplicar automáticamente `detile_surface` y descompresión BC1/BC3 antes de subir la textura a la memoria accesible de Vulkan.
+
+- **Ampliación de libScePad:**
+  - Registrado adaptador `hle_scePadClose` (`6ncge5+l5Qs`) en [adapter_registry.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/registry/adapter_registry.cpp).
+
+- **Métricas de Verificación:**
+  - **156/156 suites de pruebas automáticas aprobadas al 100%** en Debug (37.36s) y Release (17.91s).
+  - Cero advertencias con `-Wall -Wextra -Wpedantic -Werror` bajo Clang64 en C++23.
+  - Ejecución real en arranque del juego (`launcher.exe --boot --headless --timeout=5000`): montaje de archivos de episodio (`arc_0_ep_0_0.psarc`), inicialización de estado de hardware de dibujo GNM, envío ininterrumpido de command buffers (`size0=2668`) y presentación continua de flips triple-buffer (`buffer 1 -> buffer 2 -> buffer 0`).
+

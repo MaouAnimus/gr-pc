@@ -34,6 +34,11 @@ struct NativeDraw {
     std::optional<VkRect2D> scissor;
     std::uint32_t first_vertex{}, first_instance{};
     std::int32_t vertex_offset{};
+    bool has_dynamic_depth_cull{false};
+    VkCullModeFlags cull_mode{VK_CULL_MODE_NONE};
+    VkBool32 depth_test_enable{VK_FALSE};
+    VkBool32 depth_write_enable{VK_FALSE};
+    VkCompareOp depth_compare_op{VK_COMPARE_OP_LESS_OR_EQUAL};
 };
 using DrawResolver=std::function<bool(const GraphicsState&,const DrawRequest&,NativeDraw&)>;
 struct QueueStats {
@@ -54,6 +59,7 @@ public:
     // Call only AFTER vkQueueSubmit succeeds. This is NOT GPU completion.
     bool acknowledge(RecordingTicket ticket);
     void abort(RecordingTicket ticket);
+    void drain_headless();
     void reset();
     QueueStats stats() const;
     pm4::Diagnostic last_diagnostic() const;

@@ -2,6 +2,7 @@
 
 #include "hle/gnm/command_queue.h"
 #include "hle/avplayer/video_texture.h"
+#include "hle/gnm/shader_cache.h"
 #include <vulkan/vulkan.h>
 
 #include <unordered_map>
@@ -33,18 +34,26 @@ public:
     VkPipeline get_pipeline() const noexcept { return pipeline_; }
     VkPipelineLayout get_layout() const noexcept { return layout_; }
 
-    VkDescriptorSet get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format);
+    VkDescriptorSet get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format, uint32_t tiling = 0);
     // Call outside rendering, after the fence for frame_slot has completed.
     bool prepare_video_textures(VkCommandBuffer command, std::uint32_t frame_slot, std::uint32_t slot_count);
     // All submissions using these textures must have completed.
     void reset_video_textures();
 
 private:
+    struct DynamicPipeline {
+        VkPipeline pipeline{VK_NULL_HANDLE};
+        VkPipelineLayout layout{VK_NULL_HANDLE};
+        VkShaderModule vs_module{VK_NULL_HANDLE};
+        VkShaderModule ps_module{VK_NULL_HANDLE};
+    };
+
     VulkanShaderPipeline() = default;
     ~VulkanShaderPipeline() { shutdown(); }
 
     VkDevice device_{VK_NULL_HANDLE};
     VkPhysicalDevice physical_device_{VK_NULL_HANDLE};
+    VkFormat color_format_{VK_FORMAT_B8G8R8A8_UNORM};
     VkPipelineLayout layout_{VK_NULL_HANDLE};
     VkPipeline pipeline_{VK_NULL_HANDLE};
     VkShaderModule vert_module_{VK_NULL_HANDLE};
@@ -69,6 +78,9 @@ private:
     VkDeviceSize index_buffer_size_{0};
 
     std::unordered_map<uint64_t, CachedTexture> texture_cache_{};
+    std::unordered_map<uint64_t, DynamicPipeline> dynamic_pipelines_{};
+    ShaderCache shader_cache_{".spv_cache"};
+
     struct VideoEntry {
         std::unique_ptr<avplayer::VideoTexture> texture;
         VkDescriptorSet descriptor{};
@@ -80,6 +92,8 @@ private:
     bool create_buffer(VkPhysicalDevice phys, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buffer, VkDeviceMemory& memory);
     std::uint32_t find_memory_type(VkPhysicalDevice phys, std::uint32_t typeFilter, VkMemoryPropertyFlags properties);
     bool create_linear_texture(uint32_t width, uint32_t height, VkFormat format, const void* pixels, CachedTexture& out);
+    VkPipeline create_pipeline_for_shaders(VkShaderModule vs, VkShaderModule ps, VkPipelineLayout layout);
+    DynamicPipeline* get_or_create_dynamic_pipeline(uint64_t vs_addr, uint64_t ps_addr);
 };
 
 } // namespace gravity::hle::gnm

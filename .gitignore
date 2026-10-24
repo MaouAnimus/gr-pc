@@ -26,6 +26,7 @@ __pycache__/
 .vs/
 .vscode/
 .idea/
+.spv_cache/
 *.suo
 *.user
 .DS_Store

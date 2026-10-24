@@ -710,6 +710,10 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadGetControllerInformation(int32_t h
     if (!info || handle <= 0) return -1;
     return pad::getControllerInformation(handle, reinterpret_cast<pad::ScePadControllerInformation*>(info));
 }
+extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadClose(int32_t handle) {
+    (void)handle;
+    return 0;
+}
 
 // libSceAudioOut
 struct AudioOutPortState {
@@ -1151,6 +1155,7 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("rIZnR6eSpvk", "libScePad", "scePadResetOrientation", reinterpret_cast<uintptr_t>(&hle_scePadResetOrientation));
     register_adapter("vDLMoJLde8I", "libScePad", "scePadSetTiltCorrectionState", reinterpret_cast<uintptr_t>(&hle_scePadSetTiltCorrectionState));
     register_adapter("gjP9-KQzoUk", "libScePad", "scePadGetControllerInformation", reinterpret_cast<uintptr_t>(&hle_scePadGetControllerInformation));
+    register_adapter("6ncge5+l5Qs", "libScePad", "scePadClose", reinterpret_cast<uintptr_t>(&hle_scePadClose));
 
     // ---------------------------------------------------------------------
     // 6. libSceAudioOut (Audio output)

@@ -62,3 +62,5 @@ El [informe del decodificador PM4 y la cola Vulkan](docs/LOTE_2_PM4_VULKAN.md) d
 El [conector AvPlayer con Media Foundation](docs/AVPLAYER_MEDIA_FOUNDATION.md) decodifica H.264 y PCM, entrega vídeo temporizado a texturas Vulkan y documenta las pruebas con MP4 reales del juego a 1080p60 y los límites de integración pendientes.
 
 La [base de físicas y gravedad 360°](docs/PHYSICS_GRAVITY_60HZ.md) corrige relojes y sincronización guest e incorpora paso fijo de 60 Hz y CCD de esfera contra triángulos. Su conexión al mundo Havok del juego sigue pendiente y se distingue de las pruebas nativas.
+
+Shaders: incorporados el decodificador de formatos ISA Sea Islands y la [caché SPIR-V en disco](docs/SHADER_DISK_CACHE.md). El generador GCN→SPIR-V y el enlace de recursos gráficos del juego siguen pendientes; estos componentes todavía no renderizan Kat ni Hekseville.
