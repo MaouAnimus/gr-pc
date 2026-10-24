@@ -397,6 +397,8 @@ void loader_tests() {
         CHECK(res.entry == 0x2000000000ULL + 0x2F0);
         CHECK(res.is_self == true);
         CHECK(res.num_relocations > 300000);
+        CHECK(res.tls.memory_size == 0x140 && res.tls.initial.size() == 4);
+        CHECK(res.tls.initial[0] == 0xff);
 
         // Verify entry point machine code bytes: push rbp; mov rbp, rsp
         const auto* code = reinterpret_cast<const std::uint8_t*>(res.entry);
@@ -407,6 +409,16 @@ void loader_tests() {
         CHECK(query(reinterpret_cast<void*>(res.base)).Protect == PAGE_EXECUTE_READ);
         CHECK(query(reinterpret_cast<void*>(res.base + 0x15E8000)).Protect == PAGE_READWRITE);
 
+        CHECK(as.release());
+        res = load_self(buf.data(), buf.size(), as, 0x2000000000ULL, true, false, true);
+        CHECK(res.base && res.tls_fixup_count == 2752);
+        CHECK(*reinterpret_cast<const std::uint8_t*>(res.base + 0x60dd) == 0x65);
+        CHECK(as.release());
+        buf.back() ^= 1; // Metadata outside mapped code still changes the profile identity.
+        CHECK(as.reserve(0x2000000000ULL));
+        res = load_self(buf.data(), buf.size(), as, 0x2000000000ULL, true, false, true);
+        CHECK(!res.base && res.error);
+        CHECK(query(as.base()).State == MEM_RESERVE);
         CHECK(as.release());
         std::puts("loader: SELF parsing, segment commit, 300,000+ relocations, opcode check, protection passed");
     } else {

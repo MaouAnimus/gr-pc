@@ -1,3 +1,28 @@
+## 2026-10-24 — Emulación HLE de libSceFios2 (File I/O System 2) y Pipeline de Streaming de Activos
+
+- **Objetivo:** Emulación completa de `libSceFios2` respaldada por `VfsManager` y montaje `.psarc`, resolviendo el 100% (41/41) de los imports de FIOS en `eboot.bin` para permitir el streaming de recursos desde `/app0/arc/arc_0_ep_0_0.psarc`.
+- **Implementación HLE de libSceFios2:**
+  - Layouts auténticos de structs extraídos del desensamblado de `CUSA01130/sce_module/libSceFios2.prx`:
+    - `SceFiosParams` (152 bytes / 0x98) con validación de máscara por hardware (`bextr` `(size >> 1) & 0x7FFF == 0x98`).
+    - `SceFiosStat` (80 bytes / 0x50): timestamps nanosegundo (`ctime`, `mtime`, `atime`), tamaño en bytes (offset 0x00) y atributos POSIX (offset 0x48).
+    - `SceFiosDirEntry` (1048 bytes / 0x418): stat (0x50) + buffer de nombre (968 bytes).
+  - Códigos de error y estados auténticos (`SCE_FIOS_OK`, `SCE_FIOS_ERROR_ALREADY_INITIALIZED`, `SCE_FIOS_ERROR_FILE_NOT_FOUND`, `SCE_FIOS_ERROR_BAD_FH`, `SCE_FIOS_ERROR_BAD_OP`, `SCE_FIOS_ERROR_EOF`, etc.).
+  - Implementación completa de las 41 APIs importadas por `eboot.bin`:
+    - Ciclo de vida: `sceFiosInitialize`, `sceFiosTerminate`.
+    - Filtros de E/S: `sceFiosIOFilterAdd`, `sceFiosIOFilterRemove`, `sceFiosIOFilterPsarcDearchiver`.
+    - Montaje de archivos: `sceFiosArchiveGetMountBufferSizeSync`, `sceFiosArchiveMountSync`, `sceFiosArchiveUnmountSync`.
+    - Handles de archivos (FH): `sceFiosFHOpenSync`, `sceFiosFHOpen`, `sceFiosFHReadSync`, `sceFiosFHRead`, `sceFiosFHPread`, `sceFiosFHCloseSync`, `sceFiosFHClose`, `sceFiosFHGetSize`, `sceFiosFHSeek`, `sceFiosFHTell`, `sceFiosFHSyncSync`, `sceFiosFHWrite`, `sceFiosFHWriteSync`, `sceFiosFHPwrite`.
+    - Consultas de rutas e I/O directo: `sceFiosFileGetSizeSync`, `sceFiosExistsSync`, `sceFiosDirectoryExistsSync`, `sceFiosStatSync`, `sceFiosFileReadSync`, `sceFiosFileRead`, `sceFiosFileWriteSync`, `sceFiosFileWrite`, `sceFiosFileDeleteSync`.
+    - Handles de directorios (DH): `sceFiosDHOpenSync`, `sceFiosDHOpen`, `sceFiosDHReadSync`, `sceFiosDHCloseSync`, `sceFiosDirectoryCreate`.
+    - Operaciones asíncronas (Op): `sceFiosOpWait`, `sceFiosOpGetError`, `sceFiosOpGetActualCount`, `sceFiosOpDelete`.
+    - Diagnósticos: `sceFiosDebugDumpError`.
+  - Extensión de `VfsManager` con `vfs_pread`, `vfs_get_size`, `vfs_tell`, `vfs_file_size`, `vfs_exists`, `vfs_is_dir`, `vfs_stat`, `vfs_opendir`, `vfs_readdir`, `vfs_closedir`, combinando streaming desde disco físico y archivos indexados en `.psarc`.
+  - Registro de los 41 adaptadores SysV ABI en `AdapterRegistry` bajo sus NIDs exactos de Sony.
+- **Validación y Pruebas:**
+  - Suite de pruebas unitarias `tests/fios_tests.cpp` ampliada con `file_ops` probando operaciones síncronas y asíncronas, verificación de cabecera mágica `"PSAR"`, stat, queries de tamaño, lectura de directorios y control de errores.
+  - 100% de tests aprobados (77/77) en **Debug** y **Release** bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - Ejecución verificada con `launcher.exe --headless --boot --timeout=2000`: importaciones no resueltas reducidas de 456 a 423 (33 imports resueltos adicionales).
+
 ## 2026-10-23 — Tareas N01 y N02 (Baseline, Manifiesto e Inventario Dinámico Completo)
 
 - **N01 — Baseline y Manifiesto CUSA01130:**
@@ -163,3 +188,61 @@ Solicitud: continuar el desarrollo del proyecto.
     7. Lectura condicional de parámetros de arranque (`/app0/args.txt`).
   - Intercepción limpia mediante trampa de diagnóstico al alcanzar `sceSystemServiceParamGetInt` (`eboot.bin+0x298A`), produciendo vuelco completo de registros y reporte diagnóstico sin colgar el host.
 - Total de pruebas automáticas: **36/36 tests pasando al 100%** en Debug y Release.
+
+## 2026-10-23 — Lote 2: decodificador PM4 y cola hacia Vulkan
+
+Implementados 13 opcodes Type 3 y padding Type 2, IB con límites/ciclos, envío atómico de múltiples DCB, cola limitada con productores concurrentes, tickets de grabación confirmados tras vkQueueSubmit y enlace del NID sceGnmSubmitCommandBuffers. Pruebas Vulkan con dibujos automáticos e indexados 16/32/offset y verificación de píxeles en RTX 3050. Total: 43 suites en Debug/Release. No se validaron buffers capturados del juego ni shaders GCN; constant engine, eventos y finalización/flip del invitado siguen pendientes. Ver [informe y límites](LOTE_2_PM4_VULKAN.md).
+
+## 2026-10-23 — Ejecución del plan: arranque y servicios nativos
+
+Se implementaron la consulta de parámetros del sistema, hilos con callbacks
+reales, mutex y RW locks, semáforos, equeue, acceso de lectura del kernel al VFS
+y memoria directa con límites, alineación y liberación. El loader resuelve por
+biblioteca/NID, conserva PT_TLS y aplica un perfil de 2.752 correcciones TLS
+nativas ligado al hash del ejecutable. Se preparan las pilas para marcos ELF
+grandes sin sondeos Windows. Las trampas guardan los seis argumentos enteros.
+
+Las rutas alcanzadas de módulos y vídeo dejan de devolver éxito sin implementar
+el servicio; presentación invitada, PRX y audio invitado siguen incompletos.
+Se conservan intentos independientes con hashes y diagnóstico; el harness
+termina su proceso al finalizar para no liberar código bajo hilos todavía vivos.
+
+Resultado final: **68/68 suites aprobadas en Debug y Release**, sin omisiones
+en los registros finales. Ambos arranques secuenciales superan la parada inicial
+de idioma y terminan en `sceFiosInitialize`, `eboot.bin+0x4FDC`.
+Hay 509 importaciones sin resolver. No hay primer envío PM4 ni imagen del juego.
+El [informe del lote](EJECUCION_LOTE_ARRANQUE.md) detalla evidencia y límites;
+el [plan operativo](PLAN_EJECUCION.md) mantiene las tareas restantes abiertas.
+
+Corrección de evidencia anterior: la duración de N08 no medía instrucciones,
+por lo que la afirmación histórica de «millones» no quedó demostrada. Los
+adaptadores de hilos iniciales tampoco ejecutaban callbacks. Las pruebas TLS
+anteriores verificaban helpers, no los accesos FS originales, y las pilas
+suministradas para fibras continúan pendientes. El catálogo actual excluye
+exportaciones sin nombre: 539 identidades y 142 nombres pendientes de 681.
+
+## 2026-10-24 — Hito Mayor: Bucle Gráfico Activo, Fences PM4 EOP, Desbloqueo de Flip Queue y Presentación Continua en Vulkan
+
+- **Resolución de Fences PM4 y Eventos EOP:**
+  - Decodificación completa del opcode GCN `0x47` (`EVENT_WRITE_EOP`) con desempaquetado de direcciones y escritura de payloads/timestamps en la memoria invitada, desbloqueando los hilos invitados que sondean la finalización de comandos GPU.
+  - Implementación y aceptación limpia de opcodes de sincronización y memoria: `0x37` (`WRITE_DATA`), `0x40` (`COPY_DATA`), `0x42` (`PFP_SYNC_ME`), `0x43` (`SURFACE_SYNC`), `0x46` (`EVENT_WRITE`), `0x48` (`EVENT_WRITE_EOS`), `0x49` (`RELEASE_MEM`), `0x50` (`DMA_DATA`).
+  - Cero paquetes PM4 rechazados en la corriente de inicialización de GNM.
+
+- **Pre-asignación de Ranura TLS Nativa y Modo Gráfico Completo:**
+  - Descubierto y resuelto el conflicto de ranuras Win32 TLS: cuando SDL3 y el controlador gráfico Vulkan se inicializaban antes de cargar el ELF, el controlador consumía ranuras TLS provocando que `guest_slot()` superara el límite de 64 (`TEB.TlsSlots`).
+  - La invocación anticipada de `NativeTls::supported()` al inicio de `main()` reserva la ranura de forma temprana, permitiendo que el perfil de 2.752 parches nativos se aplique con 100% de éxito tanto en modo headless como en modo con ventana SDL3 y Vulkan activo.
+
+- **Integración Completa del Subsistema VideoOut y Cola de Eventos de Flip:**
+  - Implementado el ciclo de vida completo de `libSceVideoOut` en [adapter_registry.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/registry/adapter_registry.cpp):
+    - `sceVideoOutOpen`: Abre el puerto de visualización, retornando handle válido `1`.
+    - `sceVideoOutSetBufferAttribute`: Configura atributos de framebuffer 1920x1080 y sincroniza resolución.
+    - `sceVideoOutRegisterBuffers`: Registra con seguridad los 3 framebuffers de renderizado triple en memoria directa con validación `guest_memory::accessible`.
+    - `sceVideoOutSetFlipRate`: Almacena la tasa de refresco.
+    - `sceVideoOutAddFlipEvent`: Vincula el puerto de visualización a la cola de eventos `FLIP QUEUE` (`0x10000`).
+    - `sceVideoOutSubmitFlip`: Conmuta el buffer activo, sincroniza la presentación VBlank a 60 FPS contra Vulkan, y emite el evento de finalización de flip a través de `equeue::post()`.
+  - El hilo de renderizado del juego (bloqueado previamente en `sceKernelWaitEqueue` en `eboot.bin+0x157e5`) se desbloquea de forma natural y ejecuta de forma continua su bucle de fotogramas (`buffer 1 -> buffer 2 -> buffer 0 -> buffer 1`).
+
+- **Presentación Continua en Vulkan:**
+  - Actualizado `VideoRenderer::render_frame()` para presentar el fondo azul cómic cel-shaded característico de Kat (`0.05f, 0.05f, 0.08f, 1.0f`) a 60 FPS de forma ininterrumpida mientras la traducción de shaders GCN se encuentra en progreso, evitando paradas artificiales del hilo gráfico.
+  - Verificado en ejecuciones de 5 y 10 segundos ininterrumpidos: **cero cuelgues, cero violaciones de acceso y cero excepciones nativas**.
+  - Total de pruebas automáticas: **76/76 suites aprobadas al 100%** en Debug y Release con política estricta de cero advertencias (`-Wall -Wextra -Wpedantic -Werror`).

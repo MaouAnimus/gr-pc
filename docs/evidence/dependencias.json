@@ -6,7 +6,7 @@
     "total_libraries": 44,
     "total_needed_modules": 42,
     "total_dt_needed_prx": 43,
-    "verified_percentage": 94.13
+    "verified_percentage": 79.15
   },
   "dt_needed_prx": [
     "libkernel.prx",
@@ -572,8 +572,8 @@
       "total_imports": 165,
       "functions": 165,
       "objects": 0,
-      "verified": 165,
-      "unverified": 0,
+      "verified": 62,
+      "unverified": 103,
       "exported_by_local_prx": 165
     },
     {
@@ -672,8 +672,8 @@
       "total_imports": 17,
       "functions": 17,
       "objects": 0,
-      "verified": 16,
-      "unverified": 1,
+      "verified": 17,
+      "unverified": 0,
       "exported_by_local_prx": 0
     },
     {
@@ -958,7 +958,7 @@
     },
     {
       "library": "libSceSystemService",
-      "priority": "P2",
+      "priority": "P0",
       "total_imports": 3,
       "functions": 3,
       "objects": 0,

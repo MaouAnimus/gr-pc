@@ -1,10 +1,12 @@
 #include "hle/loader/elf.h"
+#include "hle/native_tls.h"
 #include "hle/fs.h"
 #include "hle/pad.h"
 #include "hle/gnm.h"
 #include "hle/video.h"
 #include "hle/runner/runner.h"
 #include "hle/registry/adapter_registry.h"
+#include "hle/kernel/pthread.h"
 #include "memory/address_space.h"
 #include <filesystem>
 #include <fstream>
@@ -14,6 +16,9 @@
 #include <string>
 
 int main(int argc, char* argv[]) try {
+    std::cout << std::unitbuf;
+    // Pre-allocate guest TLS slot early before SDL/Vulkan/GPU drivers consume TLS slots
+    (void)gravity::hle::NativeTls::supported();
     bool strict = false, headless = false, boot = false;
     std::uint32_t timeout_ms = 5000;
     for (int i = 1; i < argc; ++i) {
@@ -35,7 +40,7 @@ int main(int argc, char* argv[]) try {
             std::cerr << "Unknown option: " << arg << "\n"; return 2;
         }
     }
-    std::cout << "Gravity Rush experimental runtime - inspection only\n";
+    std::cout << "Gravity Rush experimental runtime - " << (boot ? "instrumented boot\n" : "inspection only\n");
     struct Cleanup {
         ~Cleanup() {
             gravity::hle::video::sceVideoOutShutdown();
@@ -80,7 +85,7 @@ int main(int argc, char* argv[]) try {
         gravity::hle::AdapterRegistry::instance().initialize_builtin_adapters();
     }
     auto loaded = gravity::hle::loader::load_self(bytes.data(), bytes.size(), space,
-        gravity::memory::AddressSpace::default_base, !strict, /*bind_unresolved_traps=*/boot);
+        gravity::memory::AddressSpace::default_base, !strict, /*bind_unresolved_traps=*/boot, /*native_tls_fixups=*/boot);
     if (!loaded.base) {
         std::cerr << "Load rejected: " << (loaded.error ? loaded.error : "unknown error") << "\n";
         return 1;
@@ -99,14 +104,17 @@ int main(int argc, char* argv[]) try {
               << std::dec << ", relocation slots processed: " << loaded.num_relocations << "\n";
     std::cout << "Dynamic trap thunks generated: "
               << gravity::hle::AdapterRegistry::instance().unresolved_count() << "\n";
+    std::cout << "Native TLS: " << loaded.tls.memory_size << " bytes, " << loaded.tls.initial.size()
+              << " initialized, " << loaded.tls_fixup_count << " audited instruction fixups\n";
 
     gravity::hle::AdapterRegistry::instance().set_guest_base(loaded.base);
 
     gravity::hle::UnresolvedCallInfo trap_info{};
     bool trapped = false;
+    std::mutex trap_mutex;
     gravity::hle::AdapterRegistry::instance().set_unresolved_hook([&](const gravity::hle::UnresolvedCallInfo& info) {
-        trap_info = info;
-        trapped = true;
+        std::lock_guard lock(trap_mutex);
+        if (!trapped) { trap_info = info; trapped = true; }
     });
 
     struct GuestArgs {
@@ -125,8 +133,11 @@ int main(int argc, char* argv[]) try {
         .timeout_ms = timeout_ms,
         .guest_base = loaded.base,
         .guest_size = loaded.total_size,
-        .guest_module_name = "eboot.bin"
+        .guest_module_name = "eboot.bin",
+        .tls = loaded.tls,
+        .terminate_process_on_timeout = true
     };
+    gravity::hle::pthread::configure(cfg);
 
     std::cout << "\n============================================================\n"
               << "[N08] EXECUTING GUEST ENTRY POINT: 0x" << std::hex << loaded.entry << std::dec << "\n"
@@ -144,6 +155,7 @@ int main(int argc, char* argv[]) try {
               << "============================================================\n"
               << gravity::hle::runner::format_report(report) << "\n";
 
+    std::lock_guard trap_lock(trap_mutex);
     if (trapped) {
         std::cout << "\n[HLE Diagnostic Trap Intercepted]\n"
                   << "  Library:       " << trap_info.library << "\n"
@@ -152,7 +164,13 @@ int main(int argc, char* argv[]) try {
                   << "  Module Offset: eboot.bin+0x" << trap_info.guest_offset << std::dec << "\n";
     }
 
-    return report.succeeded ? 0 : (trapped ? 0 : 1);
+    // A forced timeout can interrupt an adapter while it holds host locks.
+    // This diagnostic executable owns the whole process: skip unsafe teardown.
+    if (report.crash_reason == gravity::hle::runner::CrashReason::timeout) std::quick_exit(4);
+
+    // Guest worker threads can still be running. The boot harness owns this
+    // disposable process; releasing its mapped code before stopping them is unsafe.
+    std::_Exit(report.succeeded ? 0 : (trapped ? 3 : 1));
 } catch (const std::exception& error) {
     std::cerr << "Runtime error: " << error.what() << "\n"; return 1;
 }

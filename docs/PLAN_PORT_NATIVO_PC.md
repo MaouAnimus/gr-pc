@@ -1,5 +1,7 @@
 # Plan del port nativo de Gravity Rush Remastered para PC
 
+> **Lectura del estado:** este documento conserva el baseline y los criterios del plan inicial. Para el avance posterior y las limitaciones verificadas, consultar [CONTRASTE_AVANCE.md](CONTRASTE_AVANCE.md) y el [lote de ejecución implementado](EJECUCION_LOTE_ARRANQUE.md).
+
 Fecha de revisión: 23 de octubre de 2026.
 Objetivo confirmado por el usuario: jugar en su PC con su copia del juego,
 mediante el port y el runtime propios del proyecto. No se propone un emulador

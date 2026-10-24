@@ -2,6 +2,7 @@
 
 #include "hle/status.h"
 #include "memory/address_space.h"
+#include "hle/native_tls.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -17,6 +18,8 @@ struct LoadResult {
     bool is_self{};                   // True if SELF container was detected and unpacked
     const char* error{};
     std::vector<std::string> unresolved_symbols;
+    TlsImage tls;
+    std::uint32_t tls_fixup_count{};
 };
 
 // Loads uncompressed SELF or relocatable x86-64 ELF. Strict by default.
@@ -27,7 +30,8 @@ LoadResult load_self(const void* file_image,
                      gravity::memory::AddressSpace& as,
                      std::uintptr_t guest_base = 0x1000000000ULL,
                      bool inspection = false,
-                     bool bind_unresolved_traps = false);
+                     bool bind_unresolved_traps = false,
+                     bool native_tls_fixups = false);
 
 // Legacy / convenience wrapper
 LoadResult load_elf(const void* file_image,

@@ -4,6 +4,19 @@
 #include "hle/pad.h"
 #include "hle/video.h"
 #include "hle/audio.h"
+#include "hle/gnm.h"
+#include "hle/system_service.h"
+#include "hle/kernel/equeue.h"
+#include "hle/kernel/pthread_sync.h"
+#include "hle/kernel/pthread.h"
+#include "hle/kernel/sema.h"
+#include "hle/kernel/file.h"
+#include "hle/kernel/rwlock.h"
+#include "hle/kernel/direct_memory.h"
+#include "hle/fs/fios.h"
+#include "hle/playgo.h"
+#include "hle/guest_memory.h"
+#include <ctime>
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -19,18 +32,25 @@ namespace gravity::hle {
 // Forward assembly trampoline for unresolved calls
 // -------------------------------------------------------------------------
 
-extern "C" void hle_unresolved_dispatcher_c(uint64_t thunk_id, uintptr_t caller_rip) {
-    AdapterRegistry::instance().handle_unresolved(thunk_id, caller_rip);
+extern "C" void hle_unresolved_dispatcher_c(uint64_t thunk_id, uintptr_t caller_rip, const uint64_t* arguments) {
+    AdapterRegistry::instance().handle_unresolved(thunk_id, caller_rip, arguments);
 }
 
 __asm__(
     ".globl hle_unresolved_dispatcher_stub\n"
     "hle_unresolved_dispatcher_stub:\n"
-    "  movq (%rsp), %rdx\n"      // Win64 arg 2: caller_rip (return address on stack)
-    "  movq %r10, %rcx\n"        // Win64 arg 1: thunk_id (passed in r10)
-    "  subq $40, %rsp\n"         // Win64 shadow space
+    "  subq $88, %rsp\n"        // Shadow space, six original SysV arguments, alignment.
+    "  movq %rdi, 32(%rsp)\n"
+    "  movq %rsi, 40(%rsp)\n"
+    "  movq %rdx, 48(%rsp)\n"
+    "  movq %rcx, 56(%rsp)\n"
+    "  movq %r8, 64(%rsp)\n"
+    "  movq %r9, 72(%rsp)\n"
+    "  movq 88(%rsp), %rdx\n"    // Win64 arg 2: original return address.
+    "  movq %r10, %rcx\n"        // Win64 arg 1: thunk ID.
+    "  leaq 32(%rsp), %r8\n"     // Win64 arg 3: original SysV arguments.
     "  call hle_unresolved_dispatcher_c\n"
-    "  addq $40, %rsp\n"
+    "  addq $88, %rsp\n"
     "  ud2\n"                    // Trap with STATUS_ILLEGAL_INSTRUCTION
 );
 
@@ -55,6 +75,7 @@ extern "C" GRAVITY_SYSV_ABI void hle_stack_chk_fail() {
 // Safe Tracked Memory allocation for guest libc
 static std::mutex g_heap_mutex;
 static std::unordered_map<void*, std::size_t> g_allocated_ptrs;
+static std::unordered_map<void*, void*> g_aligned_to_raw;
 static HANDLE g_hle_heap = nullptr;
 
 static void ensure_hle_heap() {
@@ -75,12 +96,44 @@ extern "C" GRAVITY_SYSV_ABI void* hle_malloc(std::size_t size) {
     return ptr;
 }
 
+extern "C" GRAVITY_SYSV_ABI void* hle_memalign(std::size_t alignment, std::size_t size) {
+    if (size == 0) size = 1;
+    if (alignment < sizeof(void*)) alignment = sizeof(void*);
+    // Ensure alignment is power of two
+    if ((alignment & (alignment - 1)) != 0) {
+        std::size_t a = sizeof(void*);
+        while (a < alignment) a <<= 1;
+        alignment = a;
+    }
+    ensure_hle_heap();
+    const std::size_t total = size + alignment + sizeof(void*);
+    void* raw = HeapAlloc(g_hle_heap, HEAP_ZERO_MEMORY, total);
+    if (!raw) return nullptr;
+
+    const uintptr_t raw_addr = reinterpret_cast<uintptr_t>(raw);
+    const uintptr_t aligned_addr = (raw_addr + sizeof(void*) + (alignment - 1)) & ~(alignment - 1);
+    void* aligned_ptr = reinterpret_cast<void*>(aligned_addr);
+
+    {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        g_allocated_ptrs[aligned_ptr] = size;
+        g_aligned_to_raw[aligned_ptr] = raw;
+    }
+    return aligned_ptr;
+}
+
 extern "C" GRAVITY_SYSV_ABI void hle_free(void* ptr) {
     if (!ptr) return;
     ensure_hle_heap();
     bool is_tracked = false;
+    void* raw_to_free = ptr;
     {
         std::lock_guard<std::mutex> lock(g_heap_mutex);
+        auto it_aligned = g_aligned_to_raw.find(ptr);
+        if (it_aligned != g_aligned_to_raw.end()) {
+            raw_to_free = it_aligned->second;
+            g_aligned_to_raw.erase(it_aligned);
+        }
         auto it = g_allocated_ptrs.find(ptr);
         if (it != g_allocated_ptrs.end()) {
             is_tracked = true;
@@ -88,7 +141,7 @@ extern "C" GRAVITY_SYSV_ABI void hle_free(void* ptr) {
         }
     }
     if (is_tracked) {
-        HeapFree(g_hle_heap, 0, ptr);
+        HeapFree(g_hle_heap, 0, raw_to_free);
     }
 }
 
@@ -101,6 +154,24 @@ extern "C" GRAVITY_SYSV_ABI void* hle_realloc(void* ptr, std::size_t size) {
     if (!ptr) return hle_malloc(size);
     if (size == 0) { hle_free(ptr); return nullptr; }
     ensure_hle_heap();
+    bool is_aligned = false;
+    std::size_t old_size = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_heap_mutex);
+        if (g_aligned_to_raw.find(ptr) != g_aligned_to_raw.end()) {
+            is_aligned = true;
+            auto it = g_allocated_ptrs.find(ptr);
+            if (it != g_allocated_ptrs.end()) old_size = it->second;
+        }
+    }
+    if (is_aligned) {
+        void* new_ptr = hle_malloc(size);
+        if (new_ptr) {
+            std::memcpy(new_ptr, ptr, old_size < size ? old_size : size);
+            hle_free(ptr);
+        }
+        return new_ptr;
+    }
     bool is_tracked = false;
     {
         std::lock_guard<std::mutex> lock(g_heap_mutex);
@@ -259,50 +330,49 @@ extern "C" GRAVITY_SYSV_ABI float hle_kernel_sincosf(int mode, int unused, float
     (void)unused;
     return (mode == 1) ? std::sin(x) : std::cos(x);
 }
-extern "C" GRAVITY_SYSV_ABI int hle_scePthreadGetprio(uint64_t thread, int* prio) {
-    (void)thread;
-    if (prio) *prio = 256;
-    return 0;
+int encoded_pthread_error(int error) { return error ? static_cast<int>(0x80020000U + error) : 0; }
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadGetprio(uint64_t thread, int* priority) {
+    return encoded_pthread_error(pthread::getprio(thread, priority));
 }
 extern "C" GRAVITY_SYSV_ABI int hle_scePthreadAttrInit(void* attr) {
-    if (attr) std::memset(attr, 0, 64);
-    return 0;
+    return encoded_pthread_error(pthread::attr_init(static_cast<pthread::Opaque*>(attr)));
 }
 extern "C" GRAVITY_SYSV_ABI int hle_scePthreadAttrSetstacksize(void* attr, std::size_t size) {
-    (void)attr;
-    (void)size;
-    return 0;
+    return encoded_pthread_error(pthread::attr_setstacksize(static_cast<pthread::Opaque*>(attr), size));
 }
-extern "C" GRAVITY_SYSV_ABI int hle_scePthreadCreate(void** thread, const void* attr,
-                                                     void* (*start_routine)(void*),
-                                                     void* arg, const char* name) {
-    (void)attr;
-    (void)start_routine;
-    (void)arg;
-    (void)name;
-    static uint64_t next_tid = 0x2000;
-    if (thread) *thread = reinterpret_cast<void*>(++next_tid);
-    return 0;
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadCreate(pthread::Opaque* thread, const pthread::Opaque* attr,
+    pthread::Entry entry, void* argument, const char* name) {
+    return encoded_pthread_error(pthread::create(thread, attr, entry, argument, name));
 }
-extern "C" GRAVITY_SYSV_ABI int hle_scePthreadSetprio(void* thread, int prio) {
-    (void)thread;
-    (void)prio;
-    return 0;
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadSetprio(pthread::Opaque thread, int priority) {
+    return encoded_pthread_error(pthread::setprio(thread, priority));
+}
+extern "C" GRAVITY_SYSV_ABI int hle_scePthreadJoin(pthread::Opaque thread, void** result) {
+    return encoded_pthread_error(pthread::join(thread, result));
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleLoadModule(uint32_t id) {
-    (void)id;
-    return 0;
+    std::fprintf(stderr, "[Sysmodule] Load id=0x%x unavailable: module loader not implemented\n", id);
+    return static_cast<int>(id ? 0x8002004eU : 0x805a1000U);
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleUnloadModule(uint32_t id) {
-    (void)id;
-    return 0;
+    return static_cast<int>(id ? 0x805a1001U : 0x805a1000U);
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotDisable() {
-    return 0;
+    std::fprintf(stderr, "[ScreenShot] Console capture service unavailable on this backend\n");
+    return static_cast<int>(0x8002004eU); // ENOSYS: no console capture service.
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotSetParam(const void* param) {
     (void)param;
-    return 0;
+    return static_cast<int>(0x8002004eU);
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotEnable() {
+    std::fprintf(stderr, "[ScreenShot] Enable unavailable (ENOSYS)\n");
+    return static_cast<int>(0x8002004eU);
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotSetOverlayImage(const char* path, int32_t x, int32_t y) {
+    (void)path;
+    std::fprintf(stderr, "[ScreenShot] Overlay requested at (%d,%d); capture backend unavailable (ENOSYS)\n", x, y);
+    return static_cast<int>(0x8002004eU);
 }
 extern "C" GRAVITY_SYSV_ABI int hle_rand() {
     return std::rand();
@@ -384,126 +454,36 @@ static thread_local int s_orbis_errno = 0;
 extern "C" GRAVITY_SYSV_ABI int* hle_Error() {
     return &s_orbis_errno;
 }
-
-extern "C" GRAVITY_SYSV_ABI uint64_t hle_posix_pthread_self() {
-    return static_cast<uint64_t>(GetCurrentThreadId());
+extern "C" GRAVITY_SYSV_ABI int64_t hle_time(int64_t* output) {
+    static_assert(sizeof(std::time_t) == 8);
+    const int64_t result = std::time(nullptr);
+    if (output && !guest_memory::write(output, &result, sizeof(result))) {
+        s_orbis_errno = 14;
+        return -1;
+    }
+    return result;
 }
+extern "C" GRAVITY_SYSV_ABI int32_t hle_getpid() { return static_cast<int32_t>(GetCurrentProcessId()); }
+
+extern "C" GRAVITY_SYSV_ABI uint64_t hle_posix_pthread_self() { return pthread::self(); }
 
 extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_getthreadid_np() {
     return static_cast<int32_t>(GetCurrentThreadId());
 }
 
-// libkernel Direct Memory
-extern "C" GRAVITY_SYSV_ABI size_t hle_sceKernelGetDirectMemorySize() {
-    return 4ULL * 1024 * 1024 * 1024;
-}
-
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelAllocateDirectMemory(
-    int64_t searchStart, int64_t searchEnd, size_t length, size_t alignment,
-    int32_t type, int64_t* physAddrOut)
-{
-    (void)searchStart; (void)searchEnd; (void)alignment; (void)type;
-    static std::atomic<int64_t> s_next_direct_addr{0x200000000ULL};
-    int64_t addr = s_next_direct_addr.fetch_add((length + 0xFFFF) & ~0xFFFF);
-    if (physAddrOut) *physAddrOut = addr;
-    return 0;
-}
-
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelMapDirectMemory(
-    void** addr, size_t length, int32_t prot, int32_t flags, int64_t directMemoryStart, size_t alignment)
-{
-    (void)prot; (void)flags; (void)directMemoryStart; (void)alignment;
-    void* ptr = VirtualAlloc(addr ? *addr : nullptr, length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (addr && ptr) *addr = ptr;
-    return ptr ? 0 : 0x8001000C; // KERNEL_ENOMEM
-}
-
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelReleaseDirectMemory(int64_t start, size_t length) {
-    (void)start; (void)length;
-    return 0;
-}
-
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelCheckedReleaseDirectMemory(int64_t start, size_t length) {
-    (void)start; (void)length;
-    return 0;
-}
-
-// libkernel Posix Mutex / Sync wrappers
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutexattr_init(void* attr) {
-    if (attr) std::memset(attr, 0, 16);
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutexattr_destroy(void* attr) {
-    (void)attr;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutexattr_settype(void* attr, int32_t type) {
-    (void)attr; (void)type;
-    return 0;
-}
+// libkernel uses encoded errors; libScePosix uses positive guest errno.
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePthreadMutexInit(void* mutex, const void* attr, const char* name) {
-    (void)attr; (void)name;
-    if (mutex) {
-        auto* srw = reinterpret_cast<SRWLOCK*>(mutex);
-        InitializeSRWLock(srw);
-    }
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutex_destroy(void* mutex) {
-    (void)mutex;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutex_lock(void* mutex) {
-    if (mutex) {
-        AcquireSRWLockExclusive(reinterpret_cast<SRWLOCK*>(mutex));
-    }
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutex_trylock(void* mutex) {
-    if (mutex) {
-        return TryAcquireSRWLockExclusive(reinterpret_cast<SRWLOCK*>(mutex)) ? 0 : 16; // EBUSY
-    }
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutex_reltimedlock_np(void* mutex, uint64_t usec) {
-    (void)usec;
-    return hle_posix_pthread_mutex_lock(mutex);
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_posix_pthread_mutex_unlock(void* mutex) {
-    if (mutex) {
-        ReleaseSRWLockExclusive(reinterpret_cast<SRWLOCK*>(mutex));
-    }
-    return 0;
-}
-
-// libkernel Semaphores
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelCreateSema(void* sema, const char* name, uint32_t attr,
-                                                            int32_t initVal, int32_t maxVal, const void* opt) {
-    (void)sema; (void)name; (void)attr; (void)initVal; (void)maxVal; (void)opt;
-    static std::atomic<int32_t> s_next_sema{1};
-    return s_next_sema.fetch_add(1);
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelDeleteSema(int32_t sema) {
-    (void)sema;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelWaitSema(int32_t sema, int32_t count, void* timeout) {
-    (void)sema; (void)count; (void)timeout;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelSignalSema(int32_t sema, int32_t count) {
-    (void)sema; (void)count;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelCancelSema(int32_t sema, int32_t count, int32_t* numWaitThreads) {
-    (void)sema; (void)count;
-    if (numWaitThreads) *numWaitThreads = 0;
-    return 0;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_scePthreadMutexInit\n"); }
+    (void)name;
+    const int result = pthread_sync::posix_mutex_init(static_cast<pthread_sync::Opaque*>(mutex),
+        static_cast<const pthread_sync::Opaque*>(attr));
+    return result ? static_cast<int32_t>(0x80020000U + result) : 0;
 }
 
 // libkernel EventFlags
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelCreateEventFlag(void* ef, const char* name, uint32_t attr,
                                                                  uint64_t initPattern, const void* opt) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceKernelCreateEventFlag\n"); }
     (void)ef; (void)name; (void)attr; (void)initPattern; (void)opt;
     static std::atomic<int32_t> s_next_ef{1};
     return s_next_ef.fetch_add(1);
@@ -527,35 +507,144 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelWaitEventFlag(int32_t ef, uint6
     return 0;
 }
 
+// -------------------------------------------------------------------------
 // libSceVideoOut
+// -------------------------------------------------------------------------
+namespace {
+struct VideoOutState {
+    std::mutex mutex;
+    int32_t handle{1};
+    bool opened{false};
+    uint64_t flip_equeue{0};
+    void* flip_udata{nullptr};
+    std::array<void*, 16> registered_buffers{};
+    int32_t num_buffers{0};
+    int32_t flip_rate{0};
+    int32_t current_buffer{0};
+    uint64_t flip_count{0};
+
+    void reset() {
+        opened = false;
+        flip_equeue = 0;
+        flip_udata = nullptr;
+        registered_buffers.fill(nullptr);
+        num_buffers = 0;
+        flip_rate = 0;
+        current_buffer = 0;
+        flip_count = 0;
+    }
+};
+static VideoOutState g_video_out;
+} // anonymous namespace
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutOpen(int32_t userId, int32_t type, int32_t index, const void* param) {
-    (void)userId; (void)type; (void)index; (void)param;
-    return 1;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutOpen (userId=%d, type=%d, index=%d)\n", userId, type, index); }
+    (void)param;
+    std::lock_guard lock(g_video_out.mutex);
+    g_video_out.opened = true;
+    std::fprintf(stderr, "[VideoOut] Display port opened handle=%d\n", g_video_out.handle);
+    return g_video_out.handle;
 }
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutSetBufferAttribute(
+
+extern "C" GRAVITY_SYSV_ABI void hle_sceVideoOutSetBufferAttribute(
     void* attribute, uint32_t pixelFormat, uint32_t tilingMode, uint32_t aspectRatio,
     uint32_t width, uint32_t height, uint32_t pitchInPixel)
 {
-    (void)attribute; (void)pixelFormat; (void)tilingMode; (void)aspectRatio;
-    (void)width; (void)height; (void)pitchInPixel;
-    return 0;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutSetBufferAttribute (%ux%u, fmt=0x%x, pitch=%u)\n", width, height, pixelFormat, pitchInPixel); }
+    struct Attribute {
+        uint32_t format, tiling, aspect, width, height, pitch;
+        uint64_t reserved[2];
+    };
+    static_assert(sizeof(Attribute) == 40);
+    const Attribute value{pixelFormat, tilingMode, aspectRatio, width, height, pitchInPixel, {0, 0}};
+    if (!guest_memory::write(attribute, &value, sizeof(value)))
+        std::fprintf(stderr, "[VideoOut] SetBufferAttribute: invalid output address\n");
+    if (width && height) {
+        (void)video::sceVideoOutSetMode(width, height, 60);
+    }
 }
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutRegisterBuffers(
     int32_t handle, int32_t startIndex, void* const* addresses, int32_t bufferNum, const void* attribute)
 {
-    (void)handle; (void)startIndex; (void)addresses; (void)bufferNum; (void)attribute;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutRegisterBuffers (start=%d, count=%d)\n", startIndex, bufferNum); }
+    (void)attribute;
+    std::lock_guard lock(g_video_out.mutex);
+    if (!g_video_out.opened || handle != g_video_out.handle) {
+        return static_cast<int32_t>(0x8029000bU); // SCE_VIDEO_OUT_ERROR_INVALID_HANDLE
+    }
+    if (bufferNum <= 0 || bufferNum > 16 || startIndex < 0 || startIndex + bufferNum > 16) {
+        return static_cast<int32_t>(0x80290003U); // SCE_VIDEO_OUT_ERROR_INVALID_VALUE
+    }
+    if (!guest_memory::accessible(addresses, static_cast<std::size_t>(bufferNum) * sizeof(void*), false)) {
+        return static_cast<int32_t>(0x80290003U);
+    }
+    for (int32_t i = 0; i < bufferNum; ++i) {
+        void* buf_ptr = nullptr;
+        if (guest_memory::read(addresses + i, &buf_ptr, sizeof(buf_ptr))) {
+            g_video_out.registered_buffers[static_cast<std::size_t>(startIndex + i)] = buf_ptr;
+        }
+    }
+    g_video_out.num_buffers = (std::max)(g_video_out.num_buffers, startIndex + bufferNum);
+    std::fprintf(stderr, "[VideoOut] Registered %d display buffers (total=%d)\n",
+                 bufferNum, g_video_out.num_buffers);
     return 0;
 }
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutSetFlipRate(int32_t handle, int32_t rate) {
-    (void)handle; (void)rate;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutSetFlipRate (rate=%d)\n", rate); }
+    std::lock_guard lock(g_video_out.mutex);
+    if (!g_video_out.opened || handle != g_video_out.handle) {
+        return static_cast<int32_t>(0x8029000bU);
+    }
+    g_video_out.flip_rate = rate;
     return 0;
 }
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutAddFlipEvent(int32_t eq, int32_t handle, void* udata) {
-    (void)eq; (void)handle; (void)udata;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutAddFlipEvent (eq=0x%x, handle=%d, udata=%p)\n", eq, handle, udata); }
+    std::lock_guard lock(g_video_out.mutex);
+    if (!g_video_out.opened || handle != g_video_out.handle) {
+        return static_cast<int32_t>(0x8029000bU);
+    }
+    g_video_out.flip_equeue = static_cast<uint64_t>(eq);
+    g_video_out.flip_udata = udata;
+    std::fprintf(stderr, "[VideoOut] Registered flip event on equeue 0x%llx\n",
+                 static_cast<unsigned long long>(g_video_out.flip_equeue));
     return 0;
 }
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutSubmitFlip(int32_t handle, int32_t bufferIndex, int32_t flipMode, int64_t flipArg) {
-    (void)handle; (void)bufferIndex; (void)flipMode; (void)flipArg;
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutSubmitFlip (buffer=%d, mode=%d, arg=%lld)\n",
+        bufferIndex, flipMode, static_cast<long long>(flipArg)); }
+    uint64_t eq = 0;
+    void* udata = nullptr;
+    {
+        std::lock_guard lock(g_video_out.mutex);
+        if (!g_video_out.opened || handle != g_video_out.handle) {
+            return static_cast<int32_t>(0x8029000bU);
+        }
+        g_video_out.current_buffer = bufferIndex;
+        ++g_video_out.flip_count;
+        eq = g_video_out.flip_equeue;
+        udata = g_video_out.flip_udata;
+    }
+
+    if (video::video_is_initialized()) {
+        video::sceVideoOutWaitVblank();
+    }
+
+    if (eq != 0) {
+        equeue::Event event{
+            .ident = static_cast<std::uint64_t>(handle),
+            .filter = 0,
+            .flags = 0,
+            .fflags = 0,
+            .data = flipArg,
+            .udata = udata
+        };
+        (void)equeue::post(eq, event);
+    }
     return 0;
 }
 
@@ -597,31 +686,38 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutInit() {
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOpen(int32_t userId, int32_t type, int32_t index,
                                                         uint32_t len, uint32_t freq, uint32_t mode) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOpen\n"); }
     (void)userId; (void)type; (void)index; (void)len; (void)freq; (void)mode;
     return 1;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutClose(int32_t handle) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutClose\n"); }
     (void)handle;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOutput(int32_t handle, const void* ptr) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOutput\n"); }
     (void)handle; (void)ptr;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOutputs(void* params, uint32_t num) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOutputs\n"); }
     (void)params; (void)num;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutSetVolume(int32_t handle, int32_t flag, int32_t* vol) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutSetVolume\n"); }
     (void)handle; (void)flag; (void)vol;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutGetPortState(int32_t handle, void* state) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutGetPortState\n"); }
     (void)handle;
     if (state) std::memset(state, 0, 16);
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutSetMixLevelPadSpk(int32_t handle, int32_t mixLevel) {
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutSetMixLevelPadSpk\n"); }
     (void)handle; (void)mixLevel;
     return 0;
 }
@@ -656,34 +752,48 @@ void AdapterRegistry::clear() {
     thunk_pages_.clear();
     thunks_in_current_page_ = 0;
     builtins_initialized_ = false;
+    {
+        std::lock_guard vo_lock(g_video_out.mutex);
+        g_video_out.reset();
+    }
+    fios::reset();
 }
 
 void AdapterRegistry::register_adapter(std::string_view nid, std::string_view library,
                                       std::string_view name, uintptr_t func_ptr,
                                       bool is_variable) {
     std::lock_guard<std::mutex> lock(mutex_);
-    registry_[std::string(nid)] = AdapterSymbol{
+    registry_[std::string(library) + "#" + std::string(nid)] = AdapterSymbol{
         std::string(nid), std::string(library), std::string(name), func_ptr, is_variable
     };
 }
 
 uintptr_t AdapterRegistry::resolve(std::string_view nid, std::string_view library) const noexcept {
-    (void)library;
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = registry_.find(std::string(nid));
-    if (it != registry_.end()) {
-        return it->second.func_ptr;
+    if (!library.empty()) {
+        const auto it = registry_.find(std::string(library) + "#" + std::string(nid));
+        return it == registry_.end() ? 0 : it->second.func_ptr;
     }
-    return 0;
+    uintptr_t found{};
+    for (const auto& [key, symbol] : registry_) {
+        (void)key;
+        if (symbol.nid != nid) continue;
+        if (found && found != symbol.func_ptr) return 0; // Ambiguous without a library.
+        found = symbol.func_ptr;
+    }
+    return found;
 }
 
 const AdapterSymbol* AdapterRegistry::find(std::string_view nid) const noexcept {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = registry_.find(std::string(nid));
-    if (it != registry_.end()) {
-        return &it->second;
+    const AdapterSymbol* found{};
+    for (const auto& [key, symbol] : registry_) {
+        (void)key;
+        if (symbol.nid != nid) continue;
+        if (found) return nullptr;
+        found = &symbol;
     }
-    return nullptr;
+    return found;
 }
 
 std::size_t AdapterRegistry::size() const noexcept {
@@ -709,7 +819,7 @@ void AdapterRegistry::allocate_thunk_page() {
 
 uintptr_t AdapterRegistry::get_unresolved_thunk(std::string_view nid, std::string_view library) {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string key = std::string(nid);
+    std::string key = std::string(library) + "#" + std::string(nid);
     auto it = unresolved_thunks_.find(key);
     if (it != unresolved_thunks_.end()) {
         return it->second;
@@ -749,17 +859,24 @@ uintptr_t AdapterRegistry::get_unresolved_thunk(std::string_view nid, std::strin
     return ptr;
 }
 
-void AdapterRegistry::handle_unresolved(uint64_t thunk_id, uintptr_t caller_rip) {
+void AdapterRegistry::set_unresolved_hook(UnresolvedHook hook) {
+    std::lock_guard lock(mutex_);
+    unresolved_hook_ = std::move(hook);
+}
+void AdapterRegistry::handle_unresolved(uint64_t thunk_id, uintptr_t caller_rip, const uint64_t* arguments) {
     UnresolvedCallInfo info{};
+    UnresolvedHook hook;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (thunk_id < unresolved_metadata_.size()) {
             info = unresolved_metadata_[thunk_id];
             info.caller_rip = caller_rip;
+            if (arguments) std::copy_n(arguments, info.arguments.size(), info.arguments.begin());
             if (caller_rip >= guest_base_) {
                 info.guest_offset = caller_rip - guest_base_;
             }
         }
+        hook = unresolved_hook_;
     }
 
     std::fprintf(stderr, "\n============================================================\n");
@@ -767,14 +884,18 @@ void AdapterRegistry::handle_unresolved(uint64_t thunk_id, uintptr_t caller_rip)
     std::fprintf(stderr, "  Library:       %s\n", info.library.c_str());
     std::fprintf(stderr, "  NID:           %s\n", info.nid.c_str());
     std::fprintf(stderr, "  Caller RIP:    0x%llX\n", (unsigned long long)caller_rip);
+    std::fprintf(stderr, "  SysV args:     %llx %llx %llx %llx %llx %llx\n",
+        static_cast<unsigned long long>(info.arguments[0]), static_cast<unsigned long long>(info.arguments[1]),
+        static_cast<unsigned long long>(info.arguments[2]), static_cast<unsigned long long>(info.arguments[3]),
+        static_cast<unsigned long long>(info.arguments[4]), static_cast<unsigned long long>(info.arguments[5]));
     if (info.guest_offset != 0) {
         std::fprintf(stderr, "  Module Offset: eboot.bin+0x%llX\n", (unsigned long long)info.guest_offset);
     }
     std::fprintf(stderr, "============================================================\n");
     std::fflush(stderr);
 
-    if (unresolved_hook_) {
-        unresolved_hook_(info);
+    if (hook) {
+        hook(info);
     }
 }
 
@@ -791,6 +912,7 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("2X5agFjKxMc", "libc", "calloc", reinterpret_cast<uintptr_t>(&hle_calloc));
     register_adapter("sqWytnhYdEg", "libc", "realloc", reinterpret_cast<uintptr_t>(&hle_realloc));
     register_adapter("Y7aJ1uydPMo", "libc", "realloc", reinterpret_cast<uintptr_t>(&hle_realloc));
+    register_adapter("Ujf3KzMvRmI", "libc", "memalign", reinterpret_cast<uintptr_t>(&hle_memalign));
 
     register_adapter("hqi8yMOCmG0", "libc", "memcpy", reinterpret_cast<uintptr_t>(&hle_memcpy));
     register_adapter("Q3VBxCXhUHs", "libc", "memcpy", reinterpret_cast<uintptr_t>(&hle_memcpy));
@@ -877,27 +999,27 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("6UgtwV+0zb4", "libkernel", "scePthreadCreate", reinterpret_cast<uintptr_t>(&hle_scePthreadCreate));
     register_adapter("W0Hpm2X0uPE", "libkernel", "scePthreadSetprio", reinterpret_cast<uintptr_t>(&hle_scePthreadSetprio));
 
-    register_adapter("pO96TwzOm5E", "libkernel", "sceKernelGetDirectMemorySize", reinterpret_cast<uintptr_t>(&hle_sceKernelGetDirectMemorySize));
-    register_adapter("rTXw65xmLIA", "libkernel", "sceKernelAllocateDirectMemory", reinterpret_cast<uintptr_t>(&hle_sceKernelAllocateDirectMemory));
-    register_adapter("L-Q3LEjIbgA", "libkernel", "sceKernelMapDirectMemory", reinterpret_cast<uintptr_t>(&hle_sceKernelMapDirectMemory));
-    register_adapter("MBuItvba6z8", "libkernel", "sceKernelReleaseDirectMemory", reinterpret_cast<uintptr_t>(&hle_sceKernelReleaseDirectMemory));
-    register_adapter("hwVSPCmp5tM", "libkernel", "sceKernelCheckedReleaseDirectMemory", reinterpret_cast<uintptr_t>(&hle_sceKernelCheckedReleaseDirectMemory));
+    register_adapter("pO96TwzOm5E", "libkernel", "sceKernelGetDirectMemorySize", reinterpret_cast<uintptr_t>(&direct_memory::sceKernelGetDirectMemorySize));
+    register_adapter("rTXw65xmLIA", "libkernel", "sceKernelAllocateDirectMemory", reinterpret_cast<uintptr_t>(&direct_memory::sceKernelAllocateDirectMemory));
+    register_adapter("L-Q3LEjIbgA", "libkernel", "sceKernelMapDirectMemory", reinterpret_cast<uintptr_t>(&direct_memory::sceKernelMapDirectMemory));
+    register_adapter("MBuItvba6z8", "libkernel", "sceKernelReleaseDirectMemory", reinterpret_cast<uintptr_t>(&direct_memory::sceKernelReleaseDirectMemory));
+    register_adapter("hwVSPCmp5tM", "libkernel", "sceKernelCheckedReleaseDirectMemory", reinterpret_cast<uintptr_t>(&direct_memory::sceKernelReleaseDirectMemory));
 
-    register_adapter("F8bUHwAG284", "libkernel", "posix_pthread_mutexattr_init", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutexattr_init));
-    register_adapter("smWEktiyyG0", "libkernel", "posix_pthread_mutexattr_destroy", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutexattr_destroy));
-    register_adapter("iMp8QpE+XO4", "libkernel", "posix_pthread_mutexattr_settype", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutexattr_settype));
+    register_adapter("F8bUHwAG284", "libkernel", "posix_pthread_mutexattr_init", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_init));
+    register_adapter("smWEktiyyG0", "libkernel", "posix_pthread_mutexattr_destroy", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_destroy));
+    register_adapter("iMp8QpE+XO4", "libkernel", "posix_pthread_mutexattr_settype", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_settype));
     register_adapter("cmo1RIYva9o", "libkernel", "scePthreadMutexInit", reinterpret_cast<uintptr_t>(&hle_scePthreadMutexInit));
-    register_adapter("2Of0f+3mhhE", "libkernel", "posix_pthread_mutex_destroy", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutex_destroy));
-    register_adapter("9UK1vLZQft4", "libkernel", "posix_pthread_mutex_lock", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutex_lock));
-    register_adapter("upoVrzMHFeE", "libkernel", "posix_pthread_mutex_trylock", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutex_trylock));
-    register_adapter("IafI2PxcPnQ", "libkernel", "posix_pthread_mutex_reltimedlock_np", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutex_reltimedlock_np));
-    register_adapter("tn3VlD0hG60", "libkernel", "posix_pthread_mutex_unlock", reinterpret_cast<uintptr_t>(&hle_posix_pthread_mutex_unlock));
+    register_adapter("2Of0f+3mhhE", "libkernel", "posix_pthread_mutex_destroy", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_destroy));
+    register_adapter("9UK1vLZQft4", "libkernel", "posix_pthread_mutex_lock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_lock));
+    register_adapter("upoVrzMHFeE", "libkernel", "posix_pthread_mutex_trylock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_trylock));
+    register_adapter("IafI2PxcPnQ", "libkernel", "posix_pthread_mutex_reltimedlock_np", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_reltimedlock));
+    register_adapter("tn3VlD0hG60", "libkernel", "posix_pthread_mutex_unlock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_unlock));
 
-    register_adapter("188x57JYp0g", "libkernel", "sceKernelCreateSema", reinterpret_cast<uintptr_t>(&hle_sceKernelCreateSema));
-    register_adapter("R1Jvn8bSCW8", "libkernel", "sceKernelDeleteSema", reinterpret_cast<uintptr_t>(&hle_sceKernelDeleteSema));
-    register_adapter("Zxa0VhQVTsk", "libkernel", "sceKernelWaitSema", reinterpret_cast<uintptr_t>(&hle_sceKernelWaitSema));
-    register_adapter("4czppHBiriw", "libkernel", "sceKernelSignalSema", reinterpret_cast<uintptr_t>(&hle_sceKernelSignalSema));
-    register_adapter("4DM06U2BNEY", "libkernel", "sceKernelCancelSema", reinterpret_cast<uintptr_t>(&hle_sceKernelCancelSema));
+    register_adapter("188x57JYp0g", "libkernel", "sceKernelCreateSema", reinterpret_cast<uintptr_t>(&sema::sceKernelCreateSema));
+    register_adapter("R1Jvn8bSCW8", "libkernel", "sceKernelDeleteSema", reinterpret_cast<uintptr_t>(&sema::sceKernelDeleteSema));
+    register_adapter("Zxa0VhQVTsk", "libkernel", "sceKernelWaitSema", reinterpret_cast<uintptr_t>(&sema::sceKernelWaitSema));
+    register_adapter("4czppHBiriw", "libkernel", "sceKernelSignalSema", reinterpret_cast<uintptr_t>(&sema::sceKernelSignalSema));
+    register_adapter("4DM06U2BNEY", "libkernel", "sceKernelCancelSema", reinterpret_cast<uintptr_t>(&sema::sceKernelCancelSema));
 
     register_adapter("BpFoboUJoZU", "libkernel", "sceKernelCreateEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelCreateEventFlag));
     register_adapter("8mql9OcQnd4", "libkernel", "sceKernelDeleteEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelDeleteEventFlag));
@@ -959,6 +1081,236 @@ void AdapterRegistry::initialize_builtin_adapters() {
     // ---------------------------------------------------------------------
     register_adapter("tIYf0W5VTi8", "libSceScreenShot", "sceScreenShotDisable", reinterpret_cast<uintptr_t>(&hle_sceScreenShotDisable));
     register_adapter("G7KlmIYFIZc", "libSceScreenShot", "sceScreenShotSetParam", reinterpret_cast<uintptr_t>(&hle_sceScreenShotSetParam));
+    register_adapter("ahHhOf+QNkQ", "libSceScreenShot", "sceScreenShotSetOverlayImage", reinterpret_cast<uintptr_t>(&hle_sceScreenShotSetOverlayImage));
+    register_adapter("2xxUtuC-RzE", "libSceScreenShot", "sceScreenShotEnable", reinterpret_cast<uintptr_t>(&hle_sceScreenShotEnable));
+    register_adapter("zwY0YV91TTI", "libSceGnmDriver", "sceGnmSubmitCommandBuffers",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSubmitCommandBuffers));
+    register_adapter("0H2vBYbTLHI", "libSceGnmDriver", "sceGnmDrawInitDefaultHardwareState200",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDrawInitDefaultHardwareState200));
+    register_adapter("nF6bFRUBRAU", "libSceGnmDriver", "sceGnmDispatchInitDefaultHardwareState",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDispatchInitDefaultHardwareState));
+    register_adapter("b08AgtPlHPg", "libSceGnmDriver", "sceGnmAreSubmitsAllowed",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmAreSubmitsAllowed));
+    register_adapter("f33OrruQYbM", "libSceGnmDriver", "sceRazorIsLoaded",
+                     reinterpret_cast<uintptr_t>(&gnm::sceRazorIsLoaded));
+    register_adapter("iBt3Oe00Kvc", "libSceGnmDriver", "sceGnmFlushGarlic",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmFlushGarlic));
+    register_adapter("1qXLHIpROPE", "libSceGnmDriver", "sceGnmInsertWaitFlipDone",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertWaitFlipDone));
+    register_adapter("W1Etj-jlW7Y", "libSceGnmDriver", "sceGnmInsertPushMarker",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertPushMarker));
+    register_adapter("7qZVNgEu+SY", "libSceGnmDriver", "sceGnmInsertPopMarker",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertPopMarker));
+    register_adapter("jiItzS6+22g", "libSceGnmDriver", "sceGnmInsertSetMarker",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertSetMarker));
+    register_adapter("aPIZJTXC+cU", "libSceGnmDriver", "sceGnmInsertPushColorMarker",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertPushColorMarker));
+    register_adapter("aj3L-iaFmyk", "libSceGnmDriver", "sceGnmInsertSetColorMarker",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmInsertSetColorMarker));
+    register_adapter("bQVd5YzCal0", "libSceGnmDriver", "sceGnmSetPsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetPsShader));
+    register_adapter("4MgRw-bVNQU", "libSceGnmDriver", "sceGnmUpdatePsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmUpdatePsShader));
+    register_adapter("gAhCn6UiU4Y", "libSceGnmDriver", "sceGnmSetVsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetVsShader));
+    register_adapter("V31V01UiScY", "libSceGnmDriver", "sceGnmUpdateVsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmUpdateVsShader));
+    register_adapter("FUHG8sQ3R58", "libSceGnmDriver", "sceGnmSetEsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetEsShader));
+    register_adapter("VJNjFtqiF5w", "libSceGnmDriver", "sceGnmSetHsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetHsShader));
+    register_adapter("GNlx+y7xPdE", "libSceGnmDriver", "sceGnmUpdateHsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmUpdateHsShader));
+    register_adapter("vckdzbQ46SI", "libSceGnmDriver", "sceGnmSetLsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetLsShader));
+    register_adapter("KXltnCwEJHQ", "libSceGnmDriver", "sceGnmSetCsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetCsShader));
+    register_adapter("UJwNuMBcUAk", "libSceGnmDriver", "sceGnmSetGsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetGsShader));
+    register_adapter("nLM2i2+65hA", "libSceGnmDriver", "sceGnmUpdateGsShader",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmUpdateGsShader));
+    register_adapter("xbxNatawohc", "libSceGnmDriver", "sceGnmSubmitAndFlipCommandBuffers",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSubmitAndFlipCommandBuffers));
+    register_adapter("yvZ73uQUqrk", "libSceGnmDriver", "sceGnmSubmitDone",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSubmitDone));
+    register_adapter("jg33rEKLfVs", "libSceGnmDriver", "sceGnmIsUserPaEnabled",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmIsUserPaEnabled));
+    register_adapter("TLV4mswiZ4A", "libSceGnmDriver", "sceGnmDriverCaptureInProgress",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDriverCaptureInProgress));
+    register_adapter("d88anrgNoKY", "libSceGnmDriver", "sceGnmDriverTriggerCapture",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDriverTriggerCapture));
+    register_adapter("qpGITzPE+Zc", "libSceGnmDriver", "sceGnmDebugHardwareStatus",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDebugHardwareStatus));
+    register_adapter("iCO804ZgzdA", "libSceGnmDriver", "sceGnmValidateCommandBuffers",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmValidateCommandBuffers));
+    register_adapter("ln33zjBrfjk", "libSceGnmDriver", "sceGnmGetTheTessellationFactorRingBufferBaseAddress",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmGetTheTessellationFactorRingBufferBaseAddress));
+    register_adapter("26PM5Mzl8zc", "libSceGnmDriver", "sceGnmLogicalCuIndexToPhysicalCuIndex",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmLogicalCuIndexToPhysicalCuIndex));
+    register_adapter("RU74kek-N0c", "libSceGnmDriver", "sceGnmLogicalCuMaskToPhysicalCuMask",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmLogicalCuMaskToPhysicalCuMask));
+    register_adapter("bX5IbRvECXk", "libSceGnmDriver", "sceGnmDingDong",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDingDong));
+    register_adapter("HHo1BAljZO8", "libSceGnmDriver", "sceGnmDisableMipStatsReport",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmDisableMipStatsReport));
+    register_adapter("f85orjx7qts", "libSceGnmDriver", "sceGnmRequestMipStatsReportAndReset",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmRequestMipStatsReportAndReset));
+    register_adapter("+xuDhxlWRPg", "libSceGnmDriver", "sceGnmSetupMipStatsReport",
+                     reinterpret_cast<uintptr_t>(&gnm::sceGnmSetupMipStatsReport));
+    register_adapter("fZo48un7LK4", "libSceSystemService", "sceSystemServiceParamGetInt",
+                     reinterpret_cast<uintptr_t>(&system_service::sceSystemServiceParamGetInt));
+    register_adapter("wLlFkwG9UcQ", "libc", "time", reinterpret_cast<uintptr_t>(&hle_time));
+    // The supplied libc's clock export at 0x2ef60 forwards directly to
+    // sceKernelGetProcessTime (NID 4J2sUJmuHZQ), rather than the Windows CRT clock.
+    register_adapter("QZP6I9ZZxpE", "libc", "clock", reinterpret_cast<uintptr_t>(&hle_sceKernelGetProcessTime));
+    register_adapter("HoLVWNanBBc", "libkernel", "getpid", reinterpret_cast<uintptr_t>(&hle_getpid));
+    register_adapter("Vo5V8KAwCmk", "libSceSystemService", "sceSystemServiceHideSplashScreen",
+                     reinterpret_cast<uintptr_t>(&system_service::sceSystemServiceHideSplashScreen));
+    register_adapter("x1UB9bwDSOw", "libSceSystemService", "sceSystemServiceDisableMusicPlayer",
+                     reinterpret_cast<uintptr_t>(&system_service::sceSystemServiceDisableMusicPlayer));
+    register_adapter("dQHWEsJtoE4", "libScePosix", "pthread_mutexattr_init", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_init));
+    register_adapter("HF7lK46xzjY", "libScePosix", "pthread_mutexattr_destroy", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_destroy));
+    register_adapter("mDmgMOGVUqg", "libScePosix", "pthread_mutexattr_settype", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutexattr_settype));
+    register_adapter("ttHNfU+qDBU", "libScePosix", "pthread_mutex_init", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_init));
+    register_adapter("ltCfaGr2JGE", "libScePosix", "pthread_mutex_destroy", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_destroy));
+    register_adapter("7H0iTOciTLo", "libScePosix", "pthread_mutex_lock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_lock));
+    register_adapter("K-jXhbt2gn4", "libScePosix", "pthread_mutex_trylock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_trylock));
+    register_adapter("2Z+PpY6CaJg", "libScePosix", "pthread_mutex_unlock", reinterpret_cast<uintptr_t>(&pthread_sync::posix_mutex_unlock));
+    register_adapter("zHchY8ft5pk", "libScePosix", "pthread_attr_destroy", reinterpret_cast<uintptr_t>(&pthread::attr_destroy));
+    register_adapter("E+tyo3lp5Lw", "libScePosix", "pthread_attr_setdetachstate", reinterpret_cast<uintptr_t>(&pthread::attr_setdetachstate));
+    register_adapter("2Q0z6rnBrTE", "libScePosix", "pthread_attr_setstacksize", reinterpret_cast<uintptr_t>(&pthread::attr_setstacksize));
+    register_adapter("Jmi+9w9u0E4", "libScePosix", "pthread_create_name_np", reinterpret_cast<uintptr_t>(&pthread::create));
+    register_adapter("h9CcP3J0oVM", "libScePosix", "pthread_join", reinterpret_cast<uintptr_t>(&pthread::join));
+    register_adapter("EotR8a3ASf4", "libScePosix", "pthread_self", reinterpret_cast<uintptr_t>(&pthread::self));
+    register_adapter("onNY9Byn-W8", "libkernel", "scePthreadJoin", reinterpret_cast<uintptr_t>(&hle_scePthreadJoin));
+    register_adapter("D0OdFMjp46I", "libkernel", "sceKernelCreateEqueue", reinterpret_cast<uintptr_t>(&equeue::sceKernelCreateEqueue));
+    register_adapter("yOfGg-I1ZII", "libkernel", "scePthreadRwlockattrInit", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockattrInit));
+    register_adapter("i2ifZ3fS2fo", "libkernel", "scePthreadRwlockattrDestroy", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockattrDestroy));
+    register_adapter("6ULAa0fq4jA", "libkernel", "scePthreadRwlockInit", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockInit));
+    register_adapter("BB+kb08Tl9A", "libkernel", "scePthreadRwlockDestroy", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockDestroy));
+    register_adapter("Ox9i0c7L5w0", "libkernel", "scePthreadRwlockRdlock", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockRdlock));
+    register_adapter("mqdNorrB+gI", "libkernel", "scePthreadRwlockWrlock", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockWrlock));
+    register_adapter("+L98PIbGttk", "libkernel", "scePthreadRwlockUnlock", reinterpret_cast<uintptr_t>(&rwlock::scePthreadRwlockUnlock));
+    register_adapter("1G3lF1Gg1k8", "libkernel", "sceKernelOpen", reinterpret_cast<uintptr_t>(&kernel_file::sceKernelOpen));
+    register_adapter("Cg4srZ6TKbU", "libkernel", "sceKernelRead", reinterpret_cast<uintptr_t>(&kernel_file::sceKernelRead));
+    register_adapter("UK2Tl2DWUns", "libkernel", "sceKernelClose", reinterpret_cast<uintptr_t>(&kernel_file::sceKernelClose));
+    register_adapter("jpFjmgAC5AE", "libkernel", "sceKernelDeleteEqueue", reinterpret_cast<uintptr_t>(&equeue::sceKernelDeleteEqueue));
+    register_adapter("fzyMKs9kim0", "libkernel", "sceKernelWaitEqueue", reinterpret_cast<uintptr_t>(&equeue::sceKernelWaitEqueue));
+    register_adapter("62KCwEMmzcM", "libkernel", "scePthreadAttrDestroy", reinterpret_cast<uintptr_t>(&pthread::attr_destroy));
+
+    // ---------------------------------------------------------------------
+    // 9. libSceFios2 (File I/O System)
+    // ---------------------------------------------------------------------
+    register_adapter("wAKZ-det+yo", "libSceFios2", "sceFiosInitialize",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosInitialize));
+    register_adapter("3HAgZPl1v+4", "libSceFios2", "sceFiosTerminate",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosTerminate));
+    register_adapter("lgITuBsRo2o", "libSceFios2", "sceFiosIOFilterAdd",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosIOFilterAdd));
+    register_adapter("ahIXyuwF0-o", "libSceFios2", "sceFiosIOFilterRemove",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosIOFilterRemove));
+    register_adapter("OIGbkgGOu6E", "libSceFios2", "sceFiosIOFilterPsarcDearchiver",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosIOFilterPsarcDearchiver));
+    register_adapter("UUriaXy7G90", "libSceFios2", "sceFiosArchiveGetMountBufferSizeSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosArchiveGetMountBufferSizeSync));
+    register_adapter("xutLbQdqyb4", "libSceFios2", "sceFiosArchiveMountSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosArchiveMountSync));
+    register_adapter("yy6C7k7FPZY", "libSceFios2", "sceFiosArchiveUnmountSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosArchiveUnmountSync));
+
+    // File Handle API
+    register_adapter("b44anV2D7K0", "libSceFios2", "sceFiosFHOpenSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHOpenSync));
+    register_adapter("er6TkQFUvp0", "libSceFios2", "sceFiosFHOpen",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHOpen));
+    register_adapter("Bn2ZF4ZjeuQ", "libSceFios2", "sceFiosFHReadSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHReadSync));
+    register_adapter("cg-VoPqZYss", "libSceFios2", "sceFiosFHRead",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHRead));
+    register_adapter("rR8wq7YFRZs", "libSceFios2", "sceFiosFHPread",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHPread));
+    register_adapter("AOujSGqU+ms", "libSceFios2", "sceFiosFHCloseSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHCloseSync));
+    register_adapter("5sYNBNK+W3g", "libSceFios2", "sceFiosFHClose",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHClose));
+    register_adapter("FdjoqFQOlt0", "libSceFios2", "sceFiosFHGetSize",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHGetSize));
+    register_adapter("xReSebwKApA", "libSceFios2", "sceFiosFHSeek",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHSeek));
+    register_adapter("MrRFrdgpsx8", "libSceFios2", "sceFiosFHTell",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHTell));
+    register_adapter("EzzSJz6yuMc", "libSceFios2", "sceFiosFHSyncSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHSyncSync));
+    register_adapter("urUHkGGweA4", "libSceFios2", "sceFiosFHWrite",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHWrite));
+    register_adapter("Kl-TbrDU9YM", "libSceFios2", "sceFiosFHWriteSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHWriteSync));
+    register_adapter("PbxGVfOvUQY", "libSceFios2", "sceFiosFHPwrite",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFHPwrite));
+
+    // Path Queries & Direct I/O
+    register_adapter("zF8-CRvRXnM", "libSceFios2", "sceFiosFileGetSizeSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileGetSizeSync));
+    register_adapter("2ZaHWy3IhKQ", "libSceFios2", "sceFiosExistsSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosExistsSync));
+    register_adapter("OOuvHKTu4Oc", "libSceFios2", "sceFiosDirectoryExistsSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDirectoryExistsSync));
+    register_adapter("jayvY07C5dk", "libSceFios2", "sceFiosStatSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosStatSync));
+    register_adapter("kVMxSiYD6tc", "libSceFios2", "sceFiosFileReadSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileReadSync));
+    register_adapter("YlKCkfJL+Y8", "libSceFios2", "sceFiosFileRead",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileRead));
+    register_adapter("wj-U+mMbyAM", "libSceFios2", "sceFiosFileWriteSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileWriteSync));
+    register_adapter("q8CfetImdIY", "libSceFios2", "sceFiosFileWrite",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileWrite));
+    register_adapter("bDupEgbQ6Fk", "libSceFios2", "sceFiosFileDeleteSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosFileDeleteSync));
+
+    // Directory Handles
+    register_adapter("GGqucL9F+YI", "libSceFios2", "sceFiosDHOpenSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDHOpenSync));
+    register_adapter("uCkgJOrYUL4", "libSceFios2", "sceFiosDHOpen",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDHOpen));
+    register_adapter("odjOGg8harg", "libSceFios2", "sceFiosDHReadSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDHReadSync));
+    register_adapter("0-p4O8FINmU", "libSceFios2", "sceFiosDHCloseSync",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDHCloseSync));
+    register_adapter("-ULUBK21QgE", "libSceFios2", "sceFiosDirectoryCreate",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDirectoryCreate));
+
+    // Operations
+    register_adapter("SnoQQWnGK9I", "libSceFios2", "sceFiosOpWait",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosOpWait));
+    register_adapter("X+7rIfY97Ps", "libSceFios2", "sceFiosOpGetError",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosOpGetError));
+    register_adapter("+FRvKknUj1I", "libSceFios2", "sceFiosOpGetActualCount",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosOpGetActualCount));
+    register_adapter("5cyEcilO-J0", "libSceFios2", "sceFiosOpDelete",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosOpDelete));
+
+    // Debug
+    register_adapter("8BLW2WiSIuI", "libSceFios2", "sceFiosDebugDumpError",
+                     reinterpret_cast<uintptr_t>(&fios::sceFiosDebugDumpError));
+
+    // ---------------------------------------------------------------------
+    // 10. libScePlayGo (Chunk downloading & installation)
+    // ---------------------------------------------------------------------
+    register_adapter("ts6GlZOKRrE", "libScePlayGo", "scePlayGoInitialize",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoInitialize));
+    register_adapter("M1Gma1ocrGE", "libScePlayGo", "scePlayGoOpen",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoOpen));
+    register_adapter("Nn7zKwnA5q0", "libScePlayGo", "scePlayGoGetToDoList",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetToDoList));
+    register_adapter("rvBSfTimejE", "libScePlayGo", "scePlayGoGetInstallSpeed",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetInstallSpeed));
+    register_adapter("4AAcTU9R3XM", "libScePlayGo", "scePlayGoSetInstallSpeed",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoSetInstallSpeed));
+    register_adapter("uWIYLFkkwqk", "libScePlayGo", "scePlayGoGetLocus",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetLocus));
+    register_adapter("v6EZ-YWRdMs", "libScePlayGo", "scePlayGoGetEta",
+                     reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetEta));
 }
 
 } // namespace gravity::hle

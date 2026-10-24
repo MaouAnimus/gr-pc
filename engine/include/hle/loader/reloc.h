@@ -9,9 +9,11 @@
 namespace gravity::hle::loader {
 
 struct MemoryRange { std::size_t offset{}, size{}; };
+struct ImportedLibrary { std::uint16_t id{}; std::string name; };
 struct RelocationLayout {
     std::size_t strings{}, strings_size{}, symbols{}, symbols_size{};
     std::size_t rela{}, rela_size{}, plt{}, plt_size{};
+    std::vector<ImportedLibrary> libraries{};
 };
 struct RelocationReport {
     std::uint32_t applied{};

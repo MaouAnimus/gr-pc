@@ -4,16 +4,17 @@ Runtime HLE experimental para Windows x86-64 y Gravity Rush Remastered (CUSA0113
 
 | Ruta | Contenido |
 | --- | --- |
-| CMakeLists.txt | Biblioteca, inspector, diagnóstico y 14 suites |
+| CMakeLists.txt | Biblioteca, inspector, diagnóstico y 43 suites |
 | launcher.cpp | Inspector con --strict y --headless |
 | engine/src/memory/ | Reserva y protecciones de memoria |
 | engine/src/kernel/, engine/src/fiber/ | Sincronización y fibras Windows |
 | engine/src/loader/ | SELF/ELF y relocalizaciones |
 | engine/src/fs/ | PSARC y VFS de lectura |
 | engine/src/pad/, engine/src/audio/ | Controles y WASAPI |
-| engine/src/gnm/, engine/src/video.cpp | Estado GNM y presentación Vulkan; geometría pendiente |
+| engine/src/gnm/, engine/src/video.cpp | Decodificador PM4, cola y presentación Vulkan; shaders/recursos del juego pendientes |
 | engine/include/ | Contratos host |
 | tests/runtime_tests.cpp | Integración de nueve subsistemas |
+| tests/pm4_tests.cpp, tests/pm4_vulkan_test.cpp | Siete suites PM4, concurrencia y dibujos Vulkan con lectura de píxeles |
 | tests/stabilization_tests.cpp | Cinco suites sintéticas de regresión |
 | tools/ | Compilación, inspector y utilidades de auditoría |
 | out/debug/, out/release/ | Binarios y registros CTest |
@@ -23,3 +24,5 @@ Runtime HLE experimental para Windows x86-64 y Gravity Rush Remastered (CUSA0113
 Las hojas de desarrollo son propuestas de trabajo. No certifican fases terminadas al 100 %. Faltan compatibilidad binaria Orbis, TLS, dependencias, arranque, shaders, geometría y reproducción del contenido del juego. El archivo de configuración todavía no se consume. No se ha creado una distribución portable ni particiones persistentes user/.
 
 Ver [README](README.md) y [estabilización](docs/ESTABILIZACION.md).
+
+Estado gráfico actual: [PM4 y cola Vulkan](docs/LOTE_2_PM4_VULKAN.md).

@@ -80,6 +80,8 @@ public:
             }
         }
         open_files_.clear();
+        open_dirs_.clear();
+        next_dirfd_ = 100;
         archives_.clear();
         total_files_ = 0;
         initialized_ = false;
@@ -218,6 +220,300 @@ public:
         }
     }
 
+    int32_t pread(int32_t fd, void* buf, uint32_t size, int64_t offset) {
+        if (!buf || size == 0 || offset < 0) return 0;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_files_.find(fd);
+        if (it == open_files_.end()) return -1;
+
+        VfsFile& vf = it->second;
+        if (vf.is_psarc) {
+            if (static_cast<std::size_t>(offset) >= vf.data.size()) {
+                return 0; // EOF
+            }
+            std::size_t avail = vf.data.size() - static_cast<std::size_t>(offset);
+            std::size_t to_read = (std::min)(static_cast<std::size_t>(size), avail);
+            std::memcpy(buf, vf.data.data() + offset, to_read);
+            return static_cast<int32_t>(to_read);
+        } else {
+            LARGE_INTEGER cur_pos{};
+            LARGE_INTEGER zero{};
+            if (!SetFilePointerEx(vf.win_handle, zero, &cur_pos, FILE_CURRENT)) return -1;
+
+            LARGE_INTEGER target{};
+            target.QuadPart = offset;
+            if (!SetFilePointerEx(vf.win_handle, target, nullptr, FILE_BEGIN)) return -1;
+
+            DWORD bytes_read = 0;
+            BOOL ok = ReadFile(vf.win_handle, buf, size, &bytes_read, nullptr);
+            SetFilePointerEx(vf.win_handle, cur_pos, nullptr, FILE_BEGIN);
+            return ok ? static_cast<int32_t>(bytes_read) : -1;
+        }
+    }
+
+    int64_t get_size(int32_t fd) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_files_.find(fd);
+        if (it == open_files_.end()) return -1;
+
+        VfsFile& vf = it->second;
+        if (vf.is_psarc) {
+            return static_cast<int64_t>(vf.data.size());
+        } else {
+            LARGE_INTEGER li{};
+            if (GetFileSizeEx(vf.win_handle, &li)) {
+                return li.QuadPart;
+            }
+            return -1;
+        }
+    }
+
+    int64_t tell(int32_t fd) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_files_.find(fd);
+        if (it == open_files_.end()) return -1;
+
+        VfsFile& vf = it->second;
+        if (vf.is_psarc) {
+            return static_cast<int64_t>(vf.offset);
+        } else {
+            LARGE_INTEGER zero{}, cur{};
+            if (SetFilePointerEx(vf.win_handle, zero, &cur, FILE_CURRENT)) {
+                return cur.QuadPart;
+            }
+            return -1;
+        }
+    }
+
+    int64_t file_size(const char* path) {
+        if (!path) return -1;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            if (!initialize_locked(L"CUSA01130")) return -1;
+        }
+
+        std::string_view p(path);
+        std::string norm = PsarcArchive::normalize_path(p);
+        for (const auto& arc : archives_) {
+            const auto* entry = arc->get_entry(norm);
+            if (entry) {
+                return static_cast<int64_t>(entry->uncompressed_size);
+            }
+        }
+
+        const auto root = std::filesystem::weakly_canonical(base_dir_);
+        const auto real_path = std::filesystem::weakly_canonical(root / norm);
+        std::error_code ec;
+        if (std::filesystem::exists(real_path, ec) && std::filesystem::is_regular_file(real_path, ec)) {
+            return static_cast<int64_t>(std::filesystem::file_size(real_path, ec));
+        }
+        return -1;
+    }
+
+    bool exists(const char* path) {
+        if (!path) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            if (!initialize_locked(L"CUSA01130")) return false;
+        }
+
+        std::string_view p(path);
+        std::string norm = PsarcArchive::normalize_path(p);
+        for (const auto& arc : archives_) {
+            if (arc->get_entry(norm)) return true;
+        }
+
+        const auto root = std::filesystem::weakly_canonical(base_dir_);
+        const auto real_path = std::filesystem::weakly_canonical(root / norm);
+        std::error_code ec;
+        return std::filesystem::exists(real_path, ec);
+    }
+
+    bool is_dir(const char* path) {
+        if (!path) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            if (!initialize_locked(L"CUSA01130")) return false;
+        }
+
+        std::string_view p(path);
+        std::string norm = PsarcArchive::normalize_path(p);
+        const auto root = std::filesystem::weakly_canonical(base_dir_);
+        const auto real_path = std::filesystem::weakly_canonical(root / norm);
+        std::error_code ec;
+        if (std::filesystem::is_directory(real_path, ec)) return true;
+
+        std::string prefix = norm;
+        if (!prefix.empty() && prefix.back() != '/') prefix.push_back('/');
+        for (const auto& arc : archives_) {
+            for (const auto& entry : arc->entries()) {
+                if (entry.path.starts_with(prefix)) return true;
+            }
+        }
+        return false;
+    }
+
+    int32_t stat(const char* path, void* out_stat) {
+        if (!path || !out_stat) return -1;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            if (!initialize_locked(L"CUSA01130")) return -1;
+        }
+
+        std::string_view p(path);
+        std::string norm = PsarcArchive::normalize_path(p);
+        struct RawStat {
+            int64_t size{0};
+            int64_t ctime{0};
+            int64_t mtime{0};
+            int64_t atime{0};
+            int64_t res20[5]{};
+            int64_t mode{0};
+        };
+        auto* st = static_cast<RawStat*>(out_stat);
+        std::memset(st, 0, sizeof(RawStat));
+
+        for (const auto& arc : archives_) {
+            const auto* entry = arc->get_entry(norm);
+            if (entry) {
+                st->size = static_cast<int64_t>(entry->uncompressed_size);
+                st->mode = 0100644; // S_IFREG | 0644
+                st->ctime = st->mtime = st->atime = 1600000000LL * 1000000000LL;
+                return 0;
+            }
+        }
+
+        const auto root = std::filesystem::weakly_canonical(base_dir_);
+        const auto real_path = std::filesystem::weakly_canonical(root / norm);
+        std::error_code ec;
+        auto fs_status = std::filesystem::status(real_path, ec);
+        if (ec || !std::filesystem::exists(fs_status)) {
+            // Check if virtual directory in PSARC
+            std::string prefix = norm;
+            if (!prefix.empty() && prefix.back() != '/') prefix.push_back('/');
+            for (const auto& arc : archives_) {
+                for (const auto& entry : arc->entries()) {
+                    if (entry.path.starts_with(prefix)) {
+                        st->size = 0;
+                        st->mode = 0040755; // S_IFDIR | 0755
+                        return 0;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        if (std::filesystem::is_directory(fs_status)) {
+            st->size = 0;
+            st->mode = 0040755;
+        } else {
+            st->size = static_cast<int64_t>(std::filesystem::file_size(real_path, ec));
+            st->mode = 0100644;
+        }
+        auto lwt = std::filesystem::last_write_time(real_path, ec);
+        if (!ec) {
+            auto sct = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+                std::chrono::file_clock::to_sys(lwt)).time_since_epoch().count();
+            st->ctime = st->mtime = st->atime = sct;
+        }
+        return 0;
+    }
+
+    int32_t opendir(const char* path) {
+        if (!path) return -1;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_) {
+            if (!initialize_locked(L"CUSA01130")) return -1;
+        }
+
+        std::string_view p(path);
+        std::string norm = PsarcArchive::normalize_path(p);
+        VfsDir dir{};
+
+        const auto root = std::filesystem::weakly_canonical(base_dir_);
+        const auto real_path = std::filesystem::weakly_canonical(root / norm);
+        std::error_code ec;
+        if (std::filesystem::exists(real_path, ec) && std::filesystem::is_directory(real_path, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(real_path, ec)) {
+                dir.entries.push_back({
+                    entry.path().filename().string(),
+                    entry.is_directory(ec),
+                    entry.is_regular_file(ec) ? static_cast<int64_t>(entry.file_size(ec)) : 0
+                });
+            }
+        }
+
+        // Also add unique entries from mounted archives matching the prefix
+        std::string prefix = norm;
+        if (!prefix.empty() && prefix.back() != '/') prefix.push_back('/');
+        for (const auto& arc : archives_) {
+            for (const auto& entry : arc->entries()) {
+                if (entry.path.starts_with(prefix)) {
+                    std::string_view sub = std::string_view(entry.path).substr(prefix.size());
+                    auto slash = sub.find('/');
+                    std::string child_name = (slash == std::string_view::npos) ? std::string(sub) : std::string(sub.substr(0, slash));
+                    bool is_subdir = (slash != std::string_view::npos);
+                    bool already = false;
+                    for (const auto& existing : dir.entries) {
+                        if (existing.name == child_name) {
+                            already = true;
+                            break;
+                        }
+                    }
+                    if (!already && !child_name.empty()) {
+                        dir.entries.push_back({
+                            child_name,
+                            is_subdir,
+                            is_subdir ? 0 : static_cast<int64_t>(entry.uncompressed_size)
+                        });
+                    }
+                }
+            }
+        }
+
+        int32_t dfd = next_dirfd_++;
+        open_dirs_[dfd] = std::move(dir);
+        return dfd;
+    }
+
+    int32_t readdir(int32_t dirfd, void* out_entry) {
+        if (!out_entry) return -1;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_dirs_.find(dirfd);
+        if (it == open_dirs_.end()) return -1;
+
+        VfsDir& dir = it->second;
+        if (dir.index >= dir.entries.size()) {
+            return -1; // End of directory
+        }
+
+        const auto& item = dir.entries[dir.index++];
+        struct RawDirEntry {
+            int64_t size{0};
+            int64_t ctime{0};
+            int64_t mtime{0};
+            int64_t atime{0};
+            int64_t res20[5]{};
+            int64_t mode{0};
+            char name[968]{};
+        };
+        auto* entry = static_cast<RawDirEntry*>(out_entry);
+        std::memset(entry, 0, sizeof(RawDirEntry));
+        entry->size = item.size;
+        entry->mode = item.is_directory ? 0040755 : 0100644;
+        std::strncpy(entry->name, item.name.c_str(), sizeof(entry->name) - 1);
+        return 0;
+    }
+
+    int32_t closedir(int32_t dirfd) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = open_dirs_.find(dirfd);
+        if (it == open_dirs_.end()) return -1;
+        open_dirs_.erase(it);
+        return 0;
+    }
+
     [[nodiscard]] std::size_t mounted_archives_count() const noexcept {
         return archives_.size();
     }
@@ -227,12 +523,24 @@ public:
     }
 
 private:
+    struct VfsDirEntryInfo {
+        std::string name;
+        bool is_directory{false};
+        int64_t size{0};
+    };
+    struct VfsDir {
+        std::vector<VfsDirEntryInfo> entries;
+        std::size_t index{0};
+    };
+
     std::mutex mutex_;
     bool initialized_{false};
     std::filesystem::path base_dir_{"CUSA01130"};
     std::vector<std::unique_ptr<PsarcArchive>> archives_{};
     std::unordered_map<int32_t, VfsFile> open_files_{};
+    std::unordered_map<int32_t, VfsDir> open_dirs_{};
     int32_t next_fd_{10};
+    int32_t next_dirfd_{100};
     std::size_t total_files_{0};
 };
 
@@ -252,6 +560,62 @@ std::size_t vfs_mounted_archives_count() {
 
 std::size_t vfs_total_files_count() {
     return VfsManager::instance().total_files_count();
+}
+
+int32_t vfs_open(const char* path, int32_t flags, int32_t mode) {
+    return VfsManager::instance().open(path, flags, mode);
+}
+
+int32_t vfs_close(int32_t fd) {
+    return VfsManager::instance().close(fd);
+}
+
+int32_t vfs_read(int32_t fd, void* buf, uint32_t size) {
+    return VfsManager::instance().read(fd, buf, size);
+}
+
+int32_t vfs_pread(int32_t fd, void* buf, uint32_t size, int64_t offset) {
+    return VfsManager::instance().pread(fd, buf, size, offset);
+}
+
+int64_t vfs_lseek(int32_t fd, int64_t offset, int32_t whence) {
+    return VfsManager::instance().lseek(fd, offset, whence);
+}
+
+int64_t vfs_get_size(int32_t fd) {
+    return VfsManager::instance().get_size(fd);
+}
+
+int64_t vfs_tell(int32_t fd) {
+    return VfsManager::instance().tell(fd);
+}
+
+int64_t vfs_file_size(const char* path) {
+    return VfsManager::instance().file_size(path);
+}
+
+bool vfs_exists(const char* path) {
+    return VfsManager::instance().exists(path);
+}
+
+bool vfs_is_dir(const char* path) {
+    return VfsManager::instance().is_dir(path);
+}
+
+int32_t vfs_stat(const char* path, void* out_stat) {
+    return VfsManager::instance().stat(path, out_stat);
+}
+
+int32_t vfs_opendir(const char* path) {
+    return VfsManager::instance().opendir(path);
+}
+
+int32_t vfs_readdir(int32_t dirfd, void* out_entry) {
+    return VfsManager::instance().readdir(dirfd, out_entry);
+}
+
+int32_t vfs_closedir(int32_t dirfd) {
+    return VfsManager::instance().closedir(dirfd);
 }
 
 extern "C" {
@@ -320,3 +684,4 @@ GRAVITY_SYSV_ABI int32_t sceFios2Rename(const char* oldpath, const char* newpath
 } // extern "C"
 
 } // namespace gravity::hle::fs
+

@@ -9,6 +9,7 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include <array>
 
 namespace gravity::hle {
 
@@ -17,6 +18,7 @@ struct UnresolvedCallInfo {
     std::string library;
     uintptr_t caller_rip{0};
     uintptr_t guest_offset{0};
+    std::array<std::uint64_t, 6> arguments{};
 };
 
 using UnresolvedHook = std::function<void(const UnresolvedCallInfo&)>;
@@ -52,10 +54,10 @@ public:
     [[nodiscard]] uintptr_t guest_base() const noexcept { return guest_base_; }
 
     // Register a custom hook for unresolved calls (used by isolated runner / tests)
-    void set_unresolved_hook(UnresolvedHook hook) { unresolved_hook_ = std::move(hook); }
+    void set_unresolved_hook(UnresolvedHook hook);
 
     // Handle an unresolved call dispatched from assembly stub
-    void handle_unresolved(uint64_t thunk_id, uintptr_t caller_rip);
+    void handle_unresolved(uint64_t thunk_id, uintptr_t caller_rip, const std::uint64_t* arguments);
 
     // Get count of registered adapters
     [[nodiscard]] std::size_t size() const noexcept;

@@ -11,16 +11,31 @@ endif()
 add_library(gravity_runtime STATIC
     engine/src/memory/address_space.cpp
     engine/src/kernel/kernel.cpp
+    engine/src/kernel/equeue.cpp
+    engine/src/kernel/pthread_sync.cpp
+    engine/src/kernel/pthread.cpp
+    engine/src/kernel/sema.cpp
+    engine/src/kernel/file.cpp
+    engine/src/kernel/rwlock.cpp
+    engine/src/kernel/direct_memory.cpp
+    engine/src/kernel/native_tls.cpp
     engine/src/fiber/fiber.cpp
     engine/src/loader/elf.cpp
+    engine/src/loader/tls_fixups.cpp
     engine/src/loader/reloc.cpp
     engine/src/loader/abi_thunk.cpp
     engine/src/fs/psarc.cpp
     engine/src/fs/fs.cpp
+    engine/src/fs/fios.cpp
     engine/src/pad/pad.cpp
     engine/src/audio/audio.cpp
     engine/src/gnm/gnm.cpp
+    engine/src/gnm/pm4.cpp
+    engine/src/gnm/command_queue.cpp
+    engine/src/gnm/submission.cpp
     engine/src/video.cpp
+    engine/src/system_service.cpp
+    engine/src/playgo.cpp
     engine/src/runner/runner.cpp
     engine/src/registry/adapter_registry.cpp)
 target_include_directories(gravity_runtime PUBLIC engine/include)
@@ -28,7 +43,7 @@ target_compile_features(gravity_runtime PUBLIC cxx_std_23)
 target_compile_definitions(gravity_runtime PUBLIC
     WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_compile_options(gravity_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1)
+target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt)
 
 add_executable(gravity_runtime_probe engine/src/runtime_probe.cpp)
 target_link_libraries(gravity_runtime_probe PRIVATE gravity_runtime)
@@ -41,6 +56,91 @@ target_compile_options(gravity_runtime_probe PRIVATE -Wall -Wextra -Wpedantic -W
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(direct_memory_tests tests/direct_memory_tests.cpp)
+    target_link_libraries(direct_memory_tests PRIVATE gravity_runtime)
+    target_compile_options(direct_memory_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite mapping bounds)
+        add_test(NAME direct_memory_${suite} COMMAND direct_memory_tests ${suite})
+    endforeach()
+    add_executable(rwlock_tests tests/rwlock_tests.cpp)
+    target_link_libraries(rwlock_tests PRIVATE gravity_runtime)
+    target_compile_options(rwlock_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite concurrent ownership)
+        add_test(NAME rwlock_${suite} COMMAND rwlock_tests ${suite})
+        set_tests_properties(rwlock_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(sema_tests tests/sema_tests.cpp)
+    target_link_libraries(sema_tests PRIVATE gravity_runtime)
+    target_compile_options(sema_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite count wait cancel invalid)
+        add_test(NAME sema_${suite} COMMAND sema_tests ${suite})
+        set_tests_properties(sema_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(pthread_tests tests/pthread_tests.cpp)
+    target_link_libraries(pthread_tests PRIVATE gravity_runtime)
+    target_compile_options(pthread_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite callback attributes invalid)
+        add_test(NAME pthread_${suite} COMMAND pthread_tests ${suite})
+        set_tests_properties(pthread_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(native_tls_tests tests/native_tls_tests.cpp)
+    target_link_libraries(native_tls_tests PRIVATE gravity_runtime)
+    target_compile_options(native_tls_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite layout concurrent invalid)
+        add_test(NAME native_tls_${suite} COMMAND native_tls_tests ${suite})
+        set_tests_properties(native_tls_${suite} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
+    endforeach()
+    add_executable(pthread_sync_tests tests/pthread_sync_tests.cpp)
+    target_link_libraries(pthread_sync_tests PRIVATE gravity_runtime)
+    target_compile_options(pthread_sync_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite attributes recursive concurrent invalid)
+        add_test(NAME pthread_sync_${suite} COMMAND pthread_sync_tests ${suite})
+        set_tests_properties(pthread_sync_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(equeue_tests tests/equeue_tests.cpp)
+    target_link_libraries(equeue_tests PRIVATE gravity_runtime)
+    target_compile_options(equeue_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lifecycle wait invalid)
+        add_test(NAME equeue_${suite} COMMAND equeue_tests ${suite})
+        set_tests_properties(equeue_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(system_service_tests tests/system_service_tests.cpp)
+    target_link_libraries(system_service_tests PRIVATE gravity_runtime)
+    target_compile_options(system_service_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite parameters invalid host)
+        add_test(NAME system_service_${suite} COMMAND system_service_tests ${suite})
+    endforeach()
+    add_executable(fios_tests tests/fios_tests.cpp)
+    target_link_libraries(fios_tests PRIVATE gravity_runtime)
+    target_compile_options(fios_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lifecycle invalid registry filters mount file_ops)
+        add_test(NAME fios_${suite} COMMAND fios_tests ${suite})
+        set_tests_properties(fios_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    add_executable(playgo_tests tests/playgo_tests.cpp)
+    target_link_libraries(playgo_tests PRIVATE gravity_runtime)
+    target_compile_options(playgo_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lifecycle locus registry)
+        add_test(NAME playgo_${suite} COMMAND playgo_tests ${suite})
+        set_tests_properties(playgo_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+    find_program(GLSLC glslc HINTS "C:/msys64/clang64/bin" REQUIRED)
+    foreach(stage vert frag)
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.${stage}.spv
+            COMMAND ${GLSLC} ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/pm4_triangle.${stage}
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.${stage}.spv
+            DEPENDS tests/shaders/pm4_triangle.${stage} VERBATIM)
+    endforeach()
+    add_executable(pm4_tests tests/pm4_tests.cpp tests/pm4_vulkan_test.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.vert.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.frag.spv)
+    target_link_libraries(pm4_tests PRIVATE gravity_runtime)
+    target_compile_options(pm4_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite decode invalid indirect queue concurrency adapter vulkan)
+        add_test(NAME pm4_${suite} COMMAND pm4_tests ${suite})
+        set_tests_properties(pm4_${suite} PROPERTIES TIMEOUT 30)
+    endforeach()
+    set_tests_properties(pm4_vulkan PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(stabilization_tests tests/stabilization_tests.cpp)
     target_link_libraries(stabilization_tests PRIVATE gravity_runtime)
     target_compile_options(stabilization_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -62,7 +162,7 @@ if(BUILD_TESTING)
     add_executable(runner_tests tests/runner_tests.cpp)
     target_link_libraries(runner_tests PRIVATE gravity_runtime)
     target_compile_options(runner_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    foreach(suite success read_fault write_fault div_zero timeout module_mapping)
+    foreach(suite success read_fault write_fault div_zero timeout module_mapping large_stack)
         add_test(NAME runner_${suite} COMMAND runner_tests ${suite})
         set_tests_properties(runner_${suite} PROPERTIES TIMEOUT 10)
     endforeach()

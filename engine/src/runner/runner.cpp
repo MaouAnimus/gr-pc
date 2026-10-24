@@ -4,6 +4,8 @@
 #include <iomanip>
 #include <atomic>
 #include <mutex>
+#include <cstdio>
+#include <cstdlib>
 
 namespace gravity::hle::runner {
 
@@ -14,6 +16,7 @@ struct RunnerThreadContext {
     uintptr_t entry_point{0};
     uint64_t args[6]{0, 0, 0, 0, 0, 0};
     RunnerConfig config;
+    NativeTls tls;
     ExecutionReport report;
     std::atomic<bool> completed{false};
     std::atomic<bool> crashed{false};
@@ -76,6 +79,11 @@ void resolve_address_module(uintptr_t ip, const RunnerConfig& config,
 LONG WINAPI runner_vectored_exception_handler(PEXCEPTION_POINTERS p_info) {
     auto* ctx = g_active_context;
     if (!ctx || ctx->thread_id != GetCurrentThreadId() || ctx->completed.load()) {
+        const auto code = p_info->ExceptionRecord->ExceptionCode;
+        if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION)
+            std::fprintf(stderr, "[Runner] Unmonitored exception code=0x%lx IP=%p thread=%lu\n",
+                static_cast<unsigned long>(code), p_info->ExceptionRecord->ExceptionAddress,
+                static_cast<unsigned long>(GetCurrentThreadId()));
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
@@ -98,6 +106,9 @@ LONG WINAPI runner_vectored_exception_handler(PEXCEPTION_POINTERS p_info) {
     }
 
     ctx->report.crash_reason = map_exception_code(rec->ExceptionCode, access_type);
+    std::fprintf(stderr, "[Runner] Guest exception code=0x%lx IP=%p target=0x%llx\n",
+        static_cast<unsigned long>(rec->ExceptionCode), rec->ExceptionAddress,
+        static_cast<unsigned long long>(ctx->report.fault_address));
 
     resolve_address_module(ctx->report.fault_ip, ctx->config,
                            ctx->report.module_name, ctx->report.module_offset);
@@ -132,6 +143,12 @@ LONG WINAPI runner_vectored_exception_handler(PEXCEPTION_POINTERS p_info) {
         ss << ", target 0x" << ctx->report.fault_address;
     }
     ctx->report.error_message = ss.str();
+    if (ctx->config.terminate_process_on_exception) {
+        std::fprintf(stderr, "[Guest worker failure]\n%s", format_report(ctx->report).c_str());
+        std::_Exit(5);
+    }
+
+    if (ctx->config.tls.memory_size) (void)ctx->tls.detach();
 
     // Clean exit of the guest thread without crashing host process
     ExitThread(rec->ExceptionCode);
@@ -141,6 +158,40 @@ DWORD WINAPI guest_worker_thread(LPVOID param) {
     auto* ctx = static_cast<RunnerThreadContext*>(param);
     ctx->thread_id = GetCurrentThreadId();
     g_active_context = ctx;
+    // ELF code does not emit Windows __chkstk probes. Commit the reserved
+    // native stack before entering it, retaining a bottom guard page. Otherwise
+    // a large guest frame can skip the guard and leave no stack for the VEH.
+    MEMORY_BASIC_INFORMATION stack_region{};
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    SYSTEM_INFO system{}; GetSystemInfo(&system);
+    const auto page = static_cast<std::uintptr_t>(system.dwPageSize);
+    if (!VirtualQuery(&stack_region, &stack_region, sizeof(stack_region))) {
+        ctx->report.error_message = "Cannot query native guest stack";
+        g_active_context = nullptr;
+        return 1;
+    }
+    const auto low = reinterpret_cast<std::uintptr_t>(stack_region.AllocationBase) + page;
+    const auto high = reinterpret_cast<std::uintptr_t>(tib->StackBase);
+    DWORD previous{};
+    if (high <= low + page || high - low > 64 * 1024 * 1024 ||
+        !VirtualAlloc(reinterpret_cast<void*>(low), high - low, MEM_COMMIT, PAGE_READWRITE) ||
+        !VirtualProtect(reinterpret_cast<void*>(low), high - low, PAGE_READWRITE, &previous) ||
+        !VirtualProtect(reinterpret_cast<void*>(low), page, PAGE_READWRITE | PAGE_GUARD, &previous)) {
+        ctx->report.error_message = "Cannot commit native guest stack";
+        g_active_context = nullptr;
+        return 1;
+    }
+    tib->StackLimit = reinterpret_cast<void*>(low + page);
+    ULONG exception_stack = 32768;
+    (void)SetThreadStackGuarantee(&exception_stack);
+    if (ctx->config.tls.memory_size) {
+        const auto status = ctx->tls.attach();
+        if (!status) {
+            ctx->report.error_message = "Cannot attach native guest TLS";
+            g_active_context = nullptr;
+            return 1;
+        }
+    }
 
     const auto start = std::chrono::steady_clock::now();
 
@@ -153,6 +204,7 @@ DWORD WINAPI guest_worker_thread(LPVOID param) {
         ctx->args[0], ctx->args[1], ctx->args[2],
         ctx->args[3], ctx->args[4], ctx->args[5]
     );
+    if (ctx->config.tls.memory_size) (void)ctx->tls.detach();
 
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - start
@@ -204,6 +256,13 @@ ExecutionReport execute_isolated_sysv(
     ctx.args[4] = arg4;
     ctx.args[5] = arg5;
     ctx.config = config;
+    if (config.tls.memory_size) {
+        const auto status = ctx.tls.initialize(config.tls);
+        if (!status) {
+            ctx.report.error_message = "Cannot initialize native guest TLS: " + std::string(error_name(status.error));
+            return ctx.report;
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(g_veh_mutex);
@@ -219,6 +278,11 @@ ExecutionReport execute_isolated_sysv(
         ctx.report.succeeded = false;
         ctx.report.crash_reason = CrashReason::unknown;
         ctx.report.error_message = "Failed to spawn isolated worker thread (Win32 " + std::to_string(GetLastError()) + ")";
+        std::lock_guard lock(g_veh_mutex);
+        if (g_active_runners.fetch_sub(1) == 1 && g_veh_handle) {
+            RemoveVectoredExceptionHandler(g_veh_handle);
+            g_veh_handle = nullptr;
+        }
         return ctx.report;
     }
 
@@ -228,6 +292,14 @@ ExecutionReport execute_isolated_sysv(
     );
 
     if (wait_res == WAIT_TIMEOUT) {
+        if (config.terminate_process_on_timeout) {
+            ExecutionReport timeout_report;
+            timeout_report.crash_reason = CrashReason::timeout;
+            timeout_report.execution_time = elapsed;
+            timeout_report.error_message = "Boot process deadline reached; terminating process without unsafe thread teardown";
+            std::fprintf(stderr, "[Boot timeout]\n%s", format_report(timeout_report).c_str());
+            std::_Exit(4);
+        }
         TerminateThread(h_thread, static_cast<DWORD>(CrashReason::timeout));
         CloseHandle(h_thread);
         ctx.report.succeeded = false;
@@ -247,6 +319,31 @@ ExecutionReport execute_isolated_sysv(
         }
     }
 
+    return ctx.report;
+}
+
+ExecutionReport execute_current_sysv(std::uintptr_t entry, std::uint64_t argument, const RunnerConfig& config) {
+    RunnerThreadContext ctx;
+    ctx.entry_point = entry;
+    ctx.args[0] = argument;
+    ctx.config = config;
+    if (config.tls.memory_size) {
+        const auto status = ctx.tls.initialize(config.tls);
+        if (!status) { ctx.report.error_message = "Cannot initialize callback TLS"; return ctx.report; }
+    }
+    {
+        std::lock_guard lock(g_veh_mutex);
+        if (g_active_runners.fetch_add(1) == 0)
+            g_veh_handle = AddVectoredExceptionHandler(1, runner_vectored_exception_handler);
+    }
+    guest_worker_thread(&ctx);
+    {
+        std::lock_guard lock(g_veh_mutex);
+        if (g_active_runners.fetch_sub(1) == 1 && g_veh_handle) {
+            RemoveVectoredExceptionHandler(g_veh_handle);
+            g_veh_handle = nullptr;
+        }
+    }
     return ctx.report;
 }
 

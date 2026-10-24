@@ -3,6 +3,7 @@
 #include <string>
 #include <chrono>
 #include "hle/abi.h"
+#include "hle/native_tls.h"
 
 namespace gravity::hle::runner {
 
@@ -61,6 +62,9 @@ struct RunnerConfig {
     std::uintptr_t guest_base{0};
     std::size_t guest_size{0};
     std::string guest_module_name{"eboot.bin"};
+    TlsImage tls;
+    bool terminate_process_on_timeout{false};
+    bool terminate_process_on_exception{false};
 };
 
 // Executes a System V function pointer in a monitored context with Vectored Exception Handling
@@ -79,5 +83,6 @@ ExecutionReport execute_isolated_sysv(
 std::string format_report(const ExecutionReport& report);
 
 const char* crash_reason_name(CrashReason reason) noexcept;
+ExecutionReport execute_current_sysv(std::uintptr_t entry, std::uint64_t argument, const RunnerConfig& config);
 
 } // namespace gravity::hle::runner

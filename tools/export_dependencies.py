@@ -22,7 +22,7 @@ OUT_IMPORTS = os.path.join(PROJECT_ROOT, "docs", "evidence", "imports.json")
 OUT_DEPS = os.path.join(PROJECT_ROOT, "docs", "evidence", "dependencias.json")
 OUT_UNCERTAINTIES = os.path.join(PROJECT_ROOT, "docs", "evidence", "incertidumbres.json")
 
-B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 SALT = uhx("518D64A635DED8C1E6B039B1C3E55230")
 
 def decode_b64_int(s):
@@ -30,15 +30,15 @@ def decode_b64_int(s):
     for c in s:
         idx = B64_ALPHABET.find(c)
         if idx == -1:
-            if c == "-": idx = 62
-            elif c == "_": idx = 63
+            if c in {"/", "_"}: idx = 63
+            else: raise ValueError(f"Invalid Orbis library/module ID: {s}")
         val = (val << 6) | idx
     return val
 
 def name2nid(name):
     h = hashlib.sha1(name.encode("utf-8") + SALT).digest()
     import base64
-    return base64.b64encode(h[:8][::-1]).decode().rstrip("=")
+    return base64.b64encode(h[:8][::-1]).decode().rstrip("=").replace("/", "-")
 
 def parse_fself(path):
     if not os.path.exists(path):
@@ -242,7 +242,7 @@ def main():
         "pthread_rwlock_init", "pthread_rwlock_destroy", "pthread_rwlock_rdlock", "pthread_rwlock_wrlock",
         "pthread_rwlock_unlock", "pthread_key_create", "pthread_key_delete", "pthread_getspecific",
         "pthread_setspecific", "pthread_once", "sched_yield", "getpid", "gettimeofday",
-        "clock_gettime", "clock_getres", "nanosleep", "usleep", "sleep", "socket", "bind",
+        "time", "clock", "clock_gettime", "clock_getres", "nanosleep", "usleep", "sleep", "socket", "bind",
         "listen", "accept", "connect", "send", "recv", "sendto", "recvfrom", "setsockopt",
         "getsockopt", "close", "read", "write", "open", "lseek", "ioctl", "fcntl", "fstat",
         "stat", "access", "unlink", "mkdir", "rmdir", "rename", "pipe", "select", "poll",
@@ -254,6 +254,14 @@ def main():
     ]
     for w in standard_words:
         known_name_cache[name2nid(w)] = w
+    # Preserve independently identified API names only when their NID can be
+    # reproduced. Presence of an unnamed export is not a verified name.
+    if os.path.exists(OUT_IMPORTS):
+        with open(OUT_IMPORTS, encoding="utf-8") as previous_file:
+            for previous in json.load(previous_file).get("imports", []):
+                name = previous.get("verified_symbol")
+                if name and name2nid(name) == previous["nid"]:
+                    known_name_cache[previous["nid"]] = name
 
     # 4. Clasificación de los 681 imports
     reloc_syms = eboot_info["reloc_sym_map"]
@@ -308,6 +316,7 @@ def main():
             priority = "P1"
         else:
             priority = "P2"
+        if nid in {"fZo48un7LK4", "wAKZ-det+yo"}: priority = "P0" # Observed boot blockers.
 
         # Verificación del nombre
         verified_name = None
@@ -315,7 +324,7 @@ def main():
         signature = None
 
         if nid in shad_syms:
-            verified_name = shad_syms[nid]["name"]
+            verified_name = shad_syms[nid]["name"].removeprefix("ORBIS(").removesuffix(")")
             evidence = f"shadPS4 ({shad_syms[nid]['library']}::{shad_syms[nid]['module']})"
             sym_type = shad_syms[nid]["type"]
         elif nid in known_name_cache:
@@ -323,7 +332,6 @@ def main():
             evidence = "Algoritmo criptográfico oficial SHA1(nombre + salt Sony)"
         elif nid in local_prx_exports:
             prx_match = local_prx_exports[nid]
-            verified_name = f"Export_{prx_match['prx']}"
             evidence = f"Copia local sce_module/{prx_match['prx']} (vaddr=0x{prx_match['value']:x})"
 
         # Clasificación de acción
@@ -340,7 +348,7 @@ def main():
 
         if not verified_name:
             classification = "unknown"
-            evidence = "NID sin resolver en tablas públicas conocidas"
+            evidence = evidence or "NID sin resolver en tablas públicas conocidas"
             uncertainties.append({
                 "nid": nid,
                 "raw_symbol": raw_name,
@@ -392,7 +400,8 @@ def main():
     # imports.json
     imports_doc = {
         "version": "1.0",
-        "description": "Catálogo completo y tipado de importaciones dinámicas de Gravity Rush Remastered (CUSA01130/eboot.bin)",
+        "description": "Catálogo de importaciones de Gravity Rush Remastered (CUSA01130/eboot.bin); nombre identificado no implica firma ni servicio implementado",
+        "verification_note": "total_verified counts identified names, excluding unnamed local exports. ABI signatures and runtime functionality require separate evidence.",
         "total_imports": len(imports_list),
         "total_verified": sum(1 for i in imports_list if i["verified_symbol"]),
         "total_unverified": len(uncertainties),

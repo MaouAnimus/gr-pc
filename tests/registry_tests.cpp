@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <string_view>
+#include <ctime>
 
 namespace {
 
@@ -72,6 +73,13 @@ void test_registry_lookup() {
     CHECK(reg.resolve("1tKyG7RlMJo") != 0); // scePthreadGetprio
     CHECK(reg.resolve("6UgtwV+0zb4") != 0); // scePthreadCreate
     CHECK(reg.resolve("g8cM39EUZ6o") != 0); // sceSysmoduleLoadModule
+    CHECK(reg.resolve("fZo48un7LK4", "libSceSystemService") != 0);
+    CHECK(reg.resolve("fZo48un7LK4", "libSceVideoOut") == 0);
+    reg.register_adapter("same-test-nid", "testA", "a", 123);
+    reg.register_adapter("same-test-nid", "testB", "b", 456);
+    CHECK(reg.resolve("same-test-nid", "testA") == 123);
+    CHECK(reg.resolve("same-test-nid", "testB") == 456);
+    CHECK(reg.resolve("same-test-nid") == 0);
 
     std::puts("PASS: test_registry_lookup");
 }
@@ -97,6 +105,27 @@ void test_registry_execution_via_sysv() {
     using StrlenFn = std::size_t(GRAVITY_SYSV_ABI*)(const char*);
     auto my_strlen = reinterpret_cast<StrlenFn>(reg.resolve("LTov9gMEqCU"));
     CHECK(my_strlen("GravityRushPC") == 13);
+    using OverlayFn = int(GRAVITY_SYSV_ABI*)(const char*, int32_t, int32_t);
+    auto overlay = reinterpret_cast<OverlayFn>(reg.resolve("ahHhOf+QNkQ"));
+    CHECK(overlay && overlay("/app0/overlay.png", 0, 0) == static_cast<int>(0x8002004eU));
+    using TimeSecondsFn = int64_t(GRAVITY_SYSV_ABI*)(int64_t*);
+    const auto seconds = reinterpret_cast<TimeSecondsFn>(reg.resolve("wLlFkwG9UcQ"));
+    const auto before = std::time(nullptr);
+    int64_t output{};
+    CHECK(seconds && seconds(&output) == output);
+    CHECK(output >= before && output <= std::time(nullptr));
+    CHECK(seconds(reinterpret_cast<int64_t*>(1)) == -1);
+    using ModuleFn = int(GRAVITY_SYSV_ABI*)(uint32_t);
+    const auto module_load = reinterpret_cast<ModuleFn>(reg.resolve("g8cM39EUZ6o"));
+    CHECK(module_load(0) == static_cast<int>(0x805a1000U));
+    CHECK(module_load(0x80) == static_cast<int>(0x8002004eU));
+    using AttributeFn = void(GRAVITY_SYSV_ABI*)(void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+    const auto set_attribute = reinterpret_cast<AttributeFn>(reg.resolve("i6-sR91Wt-4"));
+    struct { uint32_t data[10]; uint64_t canary; } attribute{};
+    attribute.canary = 0x12345678;
+    set_attribute(attribute.data, 0x80002200, 1, 0, 1920, 1080, 2048);
+    CHECK(attribute.data[0] == 0x80002200 && attribute.data[3] == 1920 && attribute.data[5] == 2048);
+    CHECK(attribute.data[6] == 0 && attribute.data[9] == 0 && attribute.canary == 0x12345678);
 
     // 3. Execute process time via SysV
     using TimeFn = uint64_t(GRAVITY_SYSV_ABI*)();
@@ -127,7 +156,7 @@ void test_registry_unresolved_trap() {
     opt.timeout_ms = 1000;
     auto report = hle::runner::execute_isolated_sysv(
         thunk,
-        0, 0, 0, 0, 0, 0,
+        1, 2, 3, 4, 5, 6,
         opt
     );
 
@@ -140,6 +169,7 @@ void test_registry_unresolved_trap() {
     CHECK(captured.nid == "test_fake_nid_1234");
     CHECK(captured.library == "libSceFakeModule");
     CHECK(captured.caller_rip != 0);
+    for (std::size_t i = 0; i < 6; ++i) CHECK(captured.arguments[i] == i + 1);
 
     std::puts("PASS: test_registry_unresolved_trap");
 }

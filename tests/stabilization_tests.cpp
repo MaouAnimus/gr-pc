@@ -2,6 +2,8 @@
 #include "hle/loader/reloc.h"
 #include "hle/loader/abi_thunk.h"
 #include "hle/fs.h"
+#include "hle/kernel/file.h"
+#include "hle/registry/adapter_registry.h"
 #include "hle/video.h"
 #include "hle/audio.h"
 #include <Windows.h>
@@ -93,6 +95,15 @@ void relocations() {
     CHECK(apply(true)==2); CHECK(data[0]==base+16); CHECK(data[1]==0);
     put<std::uint64_t>(b,112,16); put<std::uint64_t>(b,120,8); put<std::uint64_t>(b,128,32);
     CHECK(apply(true)==3); CHECK(data[2]==base+32); // separate PLT table
+    hle::AdapterRegistry::instance().register_adapter("alias", "expected", "alias", 0x123456);
+    std::memcpy(b.data(), "alias#B#A", 10);
+    layout.libraries = {{1, "expected"}};
+    CHECK(apply(true) == 3 && data[1] == 0x123456);
+    b[6] = 'C'; // Unknown library ID must reject the whole relocation batch.
+    data[0] = 0x55;
+    CHECK(apply(true) < 0 && data[0] == 0x55);
+    layout.libraries.clear();
+    std::memcpy(b.data(), "unknown", 8);
     put<std::uint64_t>(b,64,UINT64_MAX); CHECK(apply(true)<0);
     put<std::uint64_t>(b,64,4095); CHECK(apply(true)<0);
     put<std::uint64_t>(b,64,0); put<std::uint64_t>(b,96,(999ULL<<32)|7); CHECK(apply(true)<0);
@@ -119,6 +130,16 @@ void fs() {
     auto fd=sceFios2Open("/app0/inside.txt",0,0); CHECK(fd>=0);
     char out[6]{}; CHECK(sceFios2Read(fd,out,5)==5); CHECK(std::string_view(out)=="hello");
     CHECK(sceFios2GetStat(fd,out)==-1); CHECK(sceFios2Close(fd)==0);
+    using namespace hle::kernel_file;
+    const auto kernel_fd = sceKernelOpen("/app0/inside.txt", 0, 0);
+    CHECK(kernel_fd >= 0);
+    CHECK(sceKernelRead(kernel_fd, out, 5) == 5 && std::string_view(out) == "hello");
+    CHECK(sceKernelRead(kernel_fd, reinterpret_cast<void*>(1), 1) == static_cast<int32_t>(0x8002000eU));
+    CHECK(sceKernelRead(kernel_fd, nullptr, 0) == 0);
+    CHECK(sceKernelClose(kernel_fd) == 0);
+    CHECK(sceKernelClose(kernel_fd) == static_cast<int32_t>(0x80020009U));
+    CHECK(sceKernelOpen("/app0/../outside.txt", 0, 0) < 0);
+    CHECK(sceKernelOpen("/app0/inside.txt", 1, 0) == static_cast<int32_t>(0x8002001eU));
 }
 void headless() {
     using namespace hle::video;

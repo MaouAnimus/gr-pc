@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "description": "Lista explícita de incertidumbres y símbolos pendientes para el port nativo de PC",
-  "total_uncertainties": 40,
+  "total_uncertainties": 142,
   "uncertainties_by_library": {
     "libSceErrorDialog": 4,
     "libSceGameCustomDataDialog": 5,
@@ -10,7 +10,7 @@
     "libSceNpProfileDialog": 4,
     "libSceNpSns": 3,
     "libSceNpSnsFacebookDialog": 5,
-    "libScePosix": 1,
+    "libc": 103,
     "libkernel": 7
   },
   "symbols": [
@@ -367,10 +367,1133 @@
       "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
     },
     {
-      "nid": "wtkt-teR1so",
-      "raw_symbol": "wtkt-teR1so#F#B",
-      "library": "libScePosix",
-      "module": "libkernel",
+      "nid": "-hn1tcVHq5Q",
+      "raw_symbol": "-hn1tcVHq5Q#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "W6SiVSiCDtI",
+      "raw_symbol": "W6SiVSiCDtI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "OJjm-QOIHlI",
+      "raw_symbol": "OJjm-QOIHlI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Vla-Z+eXlxo",
+      "raw_symbol": "Vla-Z+eXlxo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "LYo3GhIlB38",
+      "raw_symbol": "LYo3GhIlB38#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "gigoVHZvVPE",
+      "raw_symbol": "gigoVHZvVPE#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "iF1iQHzxBJU",
+      "raw_symbol": "iF1iQHzxBJU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "qWESlyXMI3E",
+      "raw_symbol": "qWESlyXMI3E#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "p6lrRW8-MLY",
+      "raw_symbol": "p6lrRW8-MLY#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "mfHdJTIvhuo",
+      "raw_symbol": "mfHdJTIvhuo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "k04jLXu3+Ic",
+      "raw_symbol": "k04jLXu3+Ic#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "fEoW6BJsPt4",
+      "raw_symbol": "fEoW6BJsPt4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "bzQExy189ZI",
+      "raw_symbol": "bzQExy189ZI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "XKRegsFpEpk",
+      "raw_symbol": "XKRegsFpEpk#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "P330P3dFF68",
+      "raw_symbol": "P330P3dFF68#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "tsvEmnenz48",
+      "raw_symbol": "tsvEmnenz48#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "PDX01ziUz+4",
+      "raw_symbol": "PDX01ziUz+4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "eT2UsmTewbU",
+      "raw_symbol": "eT2UsmTewbU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "tQIo+GIPklo",
+      "raw_symbol": "tQIo+GIPklo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "zlfEH8FmyUA",
+      "raw_symbol": "zlfEH8FmyUA#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "sUP1hBaouOw",
+      "raw_symbol": "sUP1hBaouOw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "ozMAr28BwSY",
+      "raw_symbol": "ozMAr28BwSY#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "ZtjspkJQ+vw",
+      "raw_symbol": "ZtjspkJQ+vw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "3GPpjQdAMTw",
+      "raw_symbol": "3GPpjQdAMTw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "9rAeANT2tyE",
+      "raw_symbol": "9rAeANT2tyE#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "zr094EQ39Ww",
+      "raw_symbol": "zr094EQ39Ww#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "sqWytnhYdEg",
+      "raw_symbol": "sqWytnhYdEg#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "kxXCvcat1cM",
+      "raw_symbol": "kxXCvcat1cM#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "-Bl9-SZ2noc",
+      "raw_symbol": "-Bl9-SZ2noc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Uw3OTZFPNt4",
+      "raw_symbol": "Uw3OTZFPNt4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Qoo175Ig+-k",
+      "raw_symbol": "Qoo175Ig+-k#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "oVkZ8W8-Q8A",
+      "raw_symbol": "oVkZ8W8-Q8A#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "P8F2oavZXtY",
+      "raw_symbol": "P8F2oavZXtY#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "iPBqs+YUUFw",
+      "raw_symbol": "iPBqs+YUUFw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "2HnmKiLmV6s",
+      "raw_symbol": "2HnmKiLmV6s#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "hqi8yMOCmG0",
+      "raw_symbol": "hqi8yMOCmG0#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "p6LrHjIQMdk",
+      "raw_symbol": "p6LrHjIQMdk#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "1uJgoVq3bQU",
+      "raw_symbol": "1uJgoVq3bQU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "rcQCUr0EaRU",
+      "raw_symbol": "rcQCUr0EaRU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "yLE5H3058Ao",
+      "raw_symbol": "yLE5H3058Ao#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "DuW5ZqZv-70",
+      "raw_symbol": "DuW5ZqZv-70#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "N2f485TmJms",
+      "raw_symbol": "N2f485TmJms#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "-L+-8F0+gBc",
+      "raw_symbol": "-L+-8F0+gBc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Bq8m04PN1zw",
+      "raw_symbol": "Bq8m04PN1zw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "LTov9gMEqCU",
+      "raw_symbol": "LTov9gMEqCU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "FQ9NFbBHb5Y",
+      "raw_symbol": "FQ9NFbBHb5Y#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "wiR+rIcbnlc",
+      "raw_symbol": "wiR+rIcbnlc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "jjjRS7l1MPM",
+      "raw_symbol": "jjjRS7l1MPM#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "c41UEHVtiEA",
+      "raw_symbol": "c41UEHVtiEA#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "kALvdgEv5ME",
+      "raw_symbol": "kALvdgEv5ME#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "9nf8joUTSaQ",
+      "raw_symbol": "9nf8joUTSaQ#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "8u8lPzUEq+U",
+      "raw_symbol": "8u8lPzUEq+U#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "2sWzhYqFH4E",
+      "raw_symbol": "2sWzhYqFH4E#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Ujf3KzMvRmI",
+      "raw_symbol": "Ujf3KzMvRmI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "KuOuD58hqn4",
+      "raw_symbol": "KuOuD58hqn4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "H8AprKeZtNg",
+      "raw_symbol": "H8AprKeZtNg#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "fffwELXNVFA",
+      "raw_symbol": "fffwELXNVFA#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "KdP-nULpuGw",
+      "raw_symbol": "KdP-nULpuGw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Lyx2DzUL7Lc",
+      "raw_symbol": "Lyx2DzUL7Lc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "fiOgmWkP+Xc",
+      "raw_symbol": "fiOgmWkP+Xc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "uVRcM2yFdP4",
+      "raw_symbol": "uVRcM2yFdP4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "1mecP7RgI2A",
+      "raw_symbol": "1mecP7RgI2A#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "Av3zjWi64Kw",
+      "raw_symbol": "Av3zjWi64Kw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "NLwJ3q+64bY",
+      "raw_symbol": "NLwJ3q+64bY#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "7pNKcscKrf8",
+      "raw_symbol": "7pNKcscKrf8#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "cfAXurvfl5o",
+      "raw_symbol": "cfAXurvfl5o#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "St4apgcBNfo",
+      "raw_symbol": "St4apgcBNfo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64",
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "vkuuLfhnSZI",
+      "raw_symbol": "vkuuLfhnSZI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "usKbuvy2hQg",
+      "raw_symbol": "usKbuvy2hQg#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "f1zwJ3jAI2k",
+      "raw_symbol": "f1zwJ3jAI2k#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "3cUUypQzMiI",
+      "raw_symbol": "3cUUypQzMiI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "lX+4FNUklF0",
+      "raw_symbol": "lX+4FNUklF0#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "qYhnoevd9bI",
+      "raw_symbol": "qYhnoevd9bI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "ZL9FV4mJXxo",
+      "raw_symbol": "ZL9FV4mJXxo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "byV+FWlAnB4",
+      "raw_symbol": "byV+FWlAnB4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "pZ9WXcClPO8",
+      "raw_symbol": "pZ9WXcClPO8#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "XwLA5cTHjt4",
+      "raw_symbol": "XwLA5cTHjt4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_64"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "DQbtGaBKlaw",
+      "raw_symbol": "DQbtGaBKlaw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "EMutwaQ34Jo",
+      "raw_symbol": "EMutwaQ34Jo#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "q+9E0X3aWpU",
+      "raw_symbol": "q+9E0X3aWpU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "RIa6GnWp+iU",
+      "raw_symbol": "RIa6GnWp+iU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "1TDo-ImqkJc",
+      "raw_symbol": "1TDo-ImqkJc#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_GLOB_DAT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "8Q60JLJ6Rv4",
+      "raw_symbol": "8Q60JLJ6Rv4#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "gkWgn0p1AfU",
+      "raw_symbol": "gkWgn0p1AfU#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "-LFO7jhD5CE",
+      "raw_symbol": "-LFO7jhD5CE#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "lKEN2IebgJ0",
+      "raw_symbol": "lKEN2IebgJ0#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "gNQ1V2vfXDE",
+      "raw_symbol": "gNQ1V2vfXDE#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "npLpPTaSuHg",
+      "raw_symbol": "npLpPTaSuHg#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "QMFyLoqNxIg",
+      "raw_symbol": "QMFyLoqNxIg#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "KeOZ19X8-Ug",
+      "raw_symbol": "KeOZ19X8-Ug#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "cCXjU72Z0Ow",
+      "raw_symbol": "cCXjU72Z0Ow#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "kA-TdiOCsaY",
+      "raw_symbol": "kA-TdiOCsaY#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "JrwFIMzKNr0",
+      "raw_symbol": "JrwFIMzKNr0#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "zXCi78bYrEI",
+      "raw_symbol": "zXCi78bYrEI#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "0WMHDb5Dt94",
+      "raw_symbol": "0WMHDb5Dt94#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "MU25eqxSDTw",
+      "raw_symbol": "MU25eqxSDTw#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "q0F6yS-rCms",
+      "raw_symbol": "q0F6yS-rCms#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "efhK-YSUYYQ",
+      "raw_symbol": "efhK-YSUYYQ#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "-VVn74ZyhEs",
+      "raw_symbol": "-VVn74ZyhEs#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "MZO7FXyAPU8",
+      "raw_symbol": "MZO7FXyAPU8#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "n7AepwR0s34",
+      "raw_symbol": "n7AepwR0s34#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "kDZvoVssCgQ",
+      "raw_symbol": "kDZvoVssCgQ#r#C",
+      "library": "libc",
+      "module": "libc",
+      "priority": "P0",
+      "relocations": [
+        "R_X86_64_JUMP_SLOT"
+      ],
+      "risk": "Firma y semántica desconocidas; requiere stub seguro o trace dinámico"
+    },
+    {
+      "nid": "gjbmYpP-XJQ",
+      "raw_symbol": "gjbmYpP-XJQ#r#C",
+      "library": "libc",
+      "module": "libc",
       "priority": "P0",
       "relocations": [
         "R_X86_64_JUMP_SLOT"

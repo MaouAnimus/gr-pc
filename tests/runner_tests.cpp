@@ -2,6 +2,8 @@
 #include <iostream>
 #include <string_view>
 #include <cstdint>
+#include <windows.h>
+#include <cstring>
 
 namespace {
 
@@ -38,6 +40,25 @@ extern "C" GRAVITY_SYSV_ABI uint64_t sysv_infinite_loop_func(uint64_t, uint64_t,
 
 int main(int argc, char* argv[]) {
     std::string_view suite = (argc > 1) ? argv[1] : "all";
+
+    if (suite == "large_stack") {
+        // No Windows stack probes: jump over 96 KiB and access the new frame.
+        const unsigned char code[] = {0x48,0x81,0xec,0x00,0x80,0x01,0x00,
+            0x48,0xc7,0x04,0x24,0x2a,0,0,0, 0x48,0x8b,0x04,0x24,
+            0x48,0x81,0xc4,0x00,0x80,0x01,0x00,0xc3};
+        auto* executable = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!executable) return 1;
+        std::memcpy(executable, code, sizeof(code));
+        DWORD old{};
+        if (!VirtualProtect(executable, 4096, PAGE_EXECUTE_READ, &old) ||
+            !FlushInstructionCache(GetCurrentProcess(), executable, sizeof(code))) return 1;
+        auto report = gravity::hle::runner::execute_isolated_sysv(reinterpret_cast<std::uintptr_t>(executable));
+        VirtualFree(executable, 0, MEM_RELEASE);
+        if (!report.succeeded || report.return_value != 42) {
+            std::cerr << gravity::hle::runner::format_report(report); return 1;
+        }
+        return 0;
+    }
 
     if (suite == "all" || suite == "success") {
         std::cout << "[RUN] runner success...\n";

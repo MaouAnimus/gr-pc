@@ -1,5 +1,6 @@
 #include "hle/loader/elf.h"
 #include "hle/loader/reloc.h"
+#include "hle/loader/tls_fixups.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstring>
@@ -32,7 +33,7 @@ template<class T> T read(const std::uint8_t* raw, std::size_t off) {
 
 LoadResult load_self(const void* image, std::size_t size,
                     gravity::memory::AddressSpace& as, std::uintptr_t guest_base,
-                    bool inspection, bool bind_unresolved_traps) {
+                    bool inspection, bool bind_unresolved_traps, bool native_tls_fixups) {
     LoadResult result{};
     auto fail = [&](const char* message) { result.error = message; return result; };
     if (!image || size < sizeof(Ehdr)) return fail("Truncated executable header");
@@ -85,8 +86,15 @@ LoadResult load_self(const void* image, std::size_t size,
     std::size_t dynlib = 0, dynlib_size = 0;
     const Phdr* dyn_header = nullptr;
     const Phdr* dynamic = nullptr;
+    const Phdr* tls_header = nullptr;
     for (std::size_t i = 0; i < headers.size(); ++i) {
         const auto& ph = headers[i];
+        if (ph.type == 7) {
+            if (tls_header || !ph.memsz || ph.memsz > 16 * 1024 * 1024 || ph.filesz > ph.memsz ||
+                !ph.align || (ph.align & (ph.align - 1)) || ph.align > 65536 || ph.vaddr % ph.align)
+                return fail("Invalid TLS segment");
+            tls_header = &ph;
+        }
         if (ph.type == 2) {
             if (dynamic) return fail("Duplicate dynamic segment");
             dynamic = &ph;
@@ -120,6 +128,15 @@ LoadResult load_self(const void* image, std::size_t size,
             entry_valid = true;
     }
     if (segments.empty() || !entry_valid) return fail("Entry point is outside executable file-backed memory");
+    if (tls_header) {
+        bool contained = false;
+        for (const auto& segment : segments)
+            if ((segment.ph.flags & 4) && tls_header->vaddr >= segment.ph.vaddr &&
+                within(tls_header->vaddr - segment.ph.vaddr, tls_header->memsz, segment.ph.memsz) &&
+                (!tls_header->filesz || within(tls_header->vaddr - segment.ph.vaddr, tls_header->filesz, segment.ph.filesz)))
+                contained = true;
+        if (!contained) return fail("TLS is outside mapped file-backed segment");
+    }
     RelocationLayout layout{};
     if (dynamic) {
         if (!dyn_header || dynamic->offset < dyn_header->offset ||
@@ -127,12 +144,14 @@ LoadResult load_self(const void* image, std::size_t size,
             dynamic->filesz % 16) return fail("Invalid Orbis dynamic table");
         bool terminated = false;
         std::uint64_t rela_entry = 0, sym_entry = 0, plt_type = 7;
+        std::vector<std::uint64_t> import_libraries;
         for (std::size_t i = 0; i < dynamic->filesz; i += 16) {
             const auto off = dynlib + dynamic->offset - dyn_header->offset + i;
             const auto tag = read<std::uint64_t>(raw, off);
             const auto val = read<std::uint64_t>(raw, off + 8);
             if (!tag) { terminated = true; break; }
             switch (tag) {
+            case 0x61000015: import_libraries.push_back(val); break;
             case 0x61000035: layout.strings = val; break;
             case 0x61000037: layout.strings_size = val; break;
             case 0x61000039: layout.symbols = val; break;
@@ -149,6 +168,18 @@ LoadResult load_self(const void* image, std::size_t size,
         }
         if (!terminated || rela_entry != 24 || sym_entry != 24 || plt_type != 7)
             return fail("Unsupported dynamic relocation layout");
+        if (!within(layout.strings, layout.strings_size, dynlib_size)) return fail("Invalid import string table");
+        for (auto packed : import_libraries) {
+            const auto offset = packed & 0xffffffffU;
+            if (offset >= layout.strings_size) return fail("Import library string outside table");
+            const auto* name = reinterpret_cast<const char*>(raw + dynlib + layout.strings + offset);
+            const auto* end = static_cast<const char*>(std::memchr(name, 0, layout.strings_size - offset));
+            if (!end || name == end) return fail("Invalid import library name");
+            const auto id = static_cast<std::uint16_t>(packed >> 48);
+            if (std::any_of(layout.libraries.begin(), layout.libraries.end(), [&](const auto& lib) { return lib.id == id; }))
+                return fail("Duplicate import library ID");
+            layout.libraries.push_back({id, std::string(name, end)});
+        }
     } else if (dyn_header) return fail("Missing dynamic metadata");
     const bool own_reservation = !as.base();
     if (own_reservation && !as.reserve(guest_base)) return fail("Cannot reserve guest memory");
@@ -182,12 +213,21 @@ LoadResult load_self(const void* image, std::size_t size,
         result.unresolved_symbols = std::move(report.unresolved);
         return fail("Invalid relocation or unresolved import (strict mode)");
     }
+    if (native_tls_fixups && tls_header &&
+        !apply_gravity_tls_fixups({raw, size}, {reinterpret_cast<std::uint8_t*>(base), total}, result.tls_fixup_count))
+        return fail("Native TLS profile rejected: executable hash, instructions or Windows TLS layout mismatch");
     for (const auto& seg : segments) {
         const auto flags = seg.ph.flags;
         const auto protection = (flags & 1) ? memory::Protection::execute_read :
             (flags & 2) ? memory::Protection::read_write :
             (flags & 4) ? memory::Protection::read : memory::Protection::none;
         if (!as.protect(seg.ph.vaddr, seg.committed, protection)) return fail("Cannot protect segment");
+    }
+    if (tls_header) {
+        const auto* initial = reinterpret_cast<const std::uint8_t*>(base + tls_header->vaddr);
+        result.tls.initial.assign(initial, initial + tls_header->filesz);
+        result.tls.memory_size = tls_header->memsz;
+        result.tls.alignment = tls_header->align;
     }
     result.base = base; result.entry = base + eh.entry; result.total_size = total;
     result.num_relocations = report.applied; result.is_self = self;

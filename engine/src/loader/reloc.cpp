@@ -113,6 +113,20 @@ std::int64_t apply_orbis_relocations(
                         }
                     }
 
+                    if (!lib_name.empty() && !layout.libraries.empty()) {
+                        constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+                        std::uint32_t id = 0;
+                        for (char token : lib_name) {
+                            const auto digit = alphabet.find(token);
+                            if (digit == std::string_view::npos || id > (UINT16_MAX >> 6)) return -1;
+                            id = (id << 6) | static_cast<std::uint32_t>(digit);
+                        }
+                        const auto library = std::find_if(layout.libraries.begin(), layout.libraries.end(),
+                            [&](const auto& item) { return item.id == id; });
+                        if (library == layout.libraries.end()) return -1;
+                        lib_name = library->name;
+                    }
+
                     value = AdapterRegistry::instance().resolve(nid, lib_name);
                     if (!value) {
                         if (std::find(report.unresolved.begin(), report.unresolved.end(), view) == report.unresolved.end())
