@@ -19,6 +19,25 @@ Cargador validado y con reversión, RELA/PLT completas en inspección, importaci
 
 # Registro de implementación
 
+## 23 de octubre de 2026 — Adaptador `sceSystemServiceParamGetInt`
+
+- Promovido `fZo48un7LK4` de P2 opcional a P0 de adaptación tras la evidencia
+  adjunta de que el arranque del juego se detiene en esta llamada.
+- Contraste del contrato: la firma es `(param_id, int* value)` con ABI System V;
+  `Lang` tiene ID 1 y un puntero de salida nulo usa
+  `ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER` (`0x80A10003`). Referencias:
+  [shadPS4 `systemservice.cpp`](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/system/systemservice.cpp)
+  y [su cabecera](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/system/systemservice.h).
+- Registrado el adaptador de `libSceSystemService` por NID. Solo atiende `Lang`
+  con el valor 20 indicado por la evidencia adjunta; rechaza IDs no soportados
+  sin escribir la salida ni reportar éxito.
+- Añadida una suite para valor, puntero nulo, ID no soportado y registro. Debug
+  y Release: 37/37 suites cada uno.
+- No se pudo confirmar el progreso del juego: falta `CUSA01130/eboot.bin` en
+  este checkout. Próximo bloqueo: disponer del ejecutable en la ruta local
+  esperada y repetir el arranque instrumentado para comprobar el valor
+  solicitado y capturar la siguiente llamada.
+
 ## 19 de octubre de 2026 — base de la fase 1
 
 Solicitud: implementar el runtime base y fibras en el proyecto existente.

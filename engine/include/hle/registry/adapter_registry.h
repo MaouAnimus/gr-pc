@@ -63,7 +63,7 @@ public:
     // Total unresolved thunks created
     [[nodiscard]] std::size_t unresolved_count() const noexcept;
 
-    // Initializes all standard HLE adapters (libc, libkernel, libSceFiber, libScePad, libSceVideoOut, libSceAudioOut)
+    // Initializes all standard HLE adapters, including libSceSystemService.
     void initialize_builtin_adapters();
 
     // Clear registry and free thunk pages (for tests/reset)

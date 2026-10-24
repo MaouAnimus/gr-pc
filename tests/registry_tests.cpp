@@ -1,6 +1,7 @@
 #include "hle/registry/adapter_registry.h"
 #include "hle/runner/runner.h"
 #include "hle/fiber.h"
+#include "hle/orbis_error.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -109,6 +110,28 @@ void test_registry_execution_via_sysv() {
     std::puts("PASS: test_registry_execution_via_sysv");
 }
 
+void test_system_service_param_get_int() {
+    auto& reg = hle::AdapterRegistry::instance();
+    using ParamGetIntFn = int32_t(GRAVITY_SYSV_ABI*)(int32_t, int32_t*);
+
+    const auto address = reg.resolve("fZo48un7LK4", "libSceSystemService");
+    CHECK(address != 0);
+    const auto get_param = reinterpret_cast<ParamGetIntFn>(address);
+
+    int32_t language = -1;
+    CHECK(get_param(1, &language) == 0);
+    CHECK(language == 20);
+
+    language = 12345;
+    const auto parameter_error =
+        static_cast<int32_t>(hle::orbis::Error::SYSTEM_SERVICE_ERROR_PARAMETER);
+    CHECK(get_param(0, &language) == parameter_error);
+    CHECK(language == 12345);
+    CHECK(get_param(1, nullptr) == parameter_error);
+
+    std::puts("PASS: test_system_service_param_get_int");
+}
+
 void test_registry_unresolved_trap() {
     auto& reg = hle::AdapterRegistry::instance();
 
@@ -155,6 +178,9 @@ int main(int argc, char* argv[]) {
         } else if (suite == "execution") {
             test_registry_execution_via_sysv();
             return 0;
+        } else if (suite == "system_service") {
+            test_system_service_param_get_int();
+            return 0;
         } else if (suite == "trap") {
             test_registry_unresolved_trap();
             return 0;
@@ -165,6 +191,7 @@ int main(int argc, char* argv[]) {
 
     test_registry_lookup();
     test_registry_execution_via_sysv();
+    test_system_service_param_get_int();
     test_registry_unresolved_trap();
     std::puts("All registry tests passed successfully!");
     return 0;

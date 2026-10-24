@@ -4,9 +4,9 @@ Fecha: 23 de octubre de 2026.
 
 ## Resultado
 
-El proyecto se compila con Clang en Debug y Release. Las 14 suites CTest pasan
-en ambas configuraciones, sin omisiones en la validación final de este equipo.
-El ejecutable del juego se inspecciona, pero no se ejecuta.
+El proyecto se compila con Clang en Debug y Release. Las 37 suites CTest pasan
+en ambas configuraciones, sin omisiones en esta validación. El arranque del
+juego no se pudo repetir porque `CUSA01130/eboot.bin` no está en este checkout.
 
 ## Correcciones
 
@@ -39,12 +39,19 @@ El ejecutable del juego se inspecciona, pero no se ejecuta.
 - El inspector comprueba inicializaciones y lecturas, libera subsistemas y
   comunica que no ejecuta el juego. Los scripts funcionan desde otra carpeta;
   -Fresh regenera la configuración si el proyecto se mueve.
+- `sceSystemServiceParamGetInt` está registrado por NID para
+  `libSceSystemService`. Solo implementa `Lang` (ID 1), devolviendo el valor 20
+  indicado en la evidencia de ejecución adjunta; puntero nulo o parámetros no
+  soportados devuelven `ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER`.
 - README y estructura sustituyen las afirmaciones contradictorias de fases
   terminadas por el alcance comprobado.
 
 ## Verificación
 
-- Debug: 14/14 suites; Release: 14/14 suites.
+- Debug: 37/37 suites; Release: 37/37 suites.
+- El test del adaptador comprueba el valor de idioma, el registro, el puntero
+  nulo y un ID no soportado; no se pudo validar el siguiente bloqueo del juego
+  al no estar disponible `eboot.bin` en este checkout.
 - Cinco suites nuevas: cargador, relocalizaciones, VFS, ABI y modo sin gráficos.
 - Casos sintéticos: archivos truncados, offsets desbordados, tablas inválidas,
   segmentos superpuestos, permisos incompatibles, entrada fuera de código,
@@ -69,12 +76,14 @@ quedan a cero en inspección; no certifica resolución ni compatibilidad.
 
 ## Límites pendientes
 
-No se implementaron ejecución del invitado, entorno de arranque Orbis, TLS,
-carga de dependencias PRX, compatibilidad completa de exports, traducción de
-shaders/PM4, dibujo de geometría, NGS2 ni persistencia de partidas. El backend
-gráfico continúa siendo una base de presentación y estado. gravity_settings.ini
+El modo de arranque instrumentado existe, pero no se verificó la ejecución del
+juego en esta validación. Tampoco se implementaron TLS completo, carga de
+dependencias PRX, compatibilidad completa de exports, traducción de shaders/PM4,
+dibujo de geometría, NGS2 ni persistencia de partidas. El backend gráfico
+continúa siendo una base de presentación y estado. `gravity_settings.ini`
 todavía no se consume. La reserva fija puede fallar si su dirección ya está
 ocupada; el error se comunica sin sobrescribir memoria existente.
 
 Estas correcciones estabilizan los recorridos probados; no convierten el
-proyecto en un port jugable.
+proyecto en un port jugable. El historial incremental y la siguiente
+dependencia están en [worklog.md](worklog.md).

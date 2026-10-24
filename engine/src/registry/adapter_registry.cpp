@@ -4,6 +4,7 @@
 #include "hle/pad.h"
 #include "hle/video.h"
 #include "hle/audio.h"
+#include "hle/orbis_error.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,18 @@ extern "C" void hle_unresolved_dispatcher_stub();
 // -------------------------------------------------------------------------
 
 namespace {
+
+constexpr int32_t kSystemServiceLanguageParamId = 1;
+constexpr int32_t kSystemServiceLanguageValue = 20;
+
+extern "C" GRAVITY_SYSV_ABI int32_t hle_sceSystemServiceParamGetInt(
+    int32_t param_id, int32_t* value) {
+    if (value == nullptr || param_id != kSystemServiceLanguageParamId) {
+        return static_cast<int32_t>(orbis::Error::SYSTEM_SERVICE_ERROR_PARAMETER);
+    }
+    *value = kSystemServiceLanguageValue;
+    return 0;
+}
 
 // Stack Canary
 uint64_t g_guest_stack_guard = 0x595A4546414C5641ULL; // Canary cookie
@@ -959,6 +972,12 @@ void AdapterRegistry::initialize_builtin_adapters() {
     // ---------------------------------------------------------------------
     register_adapter("tIYf0W5VTi8", "libSceScreenShot", "sceScreenShotDisable", reinterpret_cast<uintptr_t>(&hle_sceScreenShotDisable));
     register_adapter("G7KlmIYFIZc", "libSceScreenShot", "sceScreenShotSetParam", reinterpret_cast<uintptr_t>(&hle_sceScreenShotSetParam));
+
+    // ---------------------------------------------------------------------
+    // 9. libSceSystemService (System configuration)
+    // ---------------------------------------------------------------------
+    register_adapter("fZo48un7LK4", "libSceSystemService", "sceSystemServiceParamGetInt",
+                     reinterpret_cast<uintptr_t>(&hle_sceSystemServiceParamGetInt));
 }
 
 } // namespace gravity::hle

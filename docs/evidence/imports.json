@@ -7525,8 +7525,8 @@
         "R_X86_64_JUMP_SLOT"
       ],
       "relocation_count": 1,
-      "priority": "P2",
-      "classification": "stub_optional",
+      "priority": "P0",
+      "classification": "adapt_host",
       "evidence": "shadPS4 (libSceSystemService::libSceSystemService)"
     },
     {

@@ -12,6 +12,7 @@ enum class Error : int32_t {
     FIBER_EINVAL  = static_cast<int32_t>(0x80020001),
     FIBER_ENORES  = static_cast<int32_t>(0x80020002),
     FIBER_EILSEQ  = static_cast<int32_t>(0x80020003),
+    SYSTEM_SERVICE_ERROR_PARAMETER = static_cast<int32_t>(0x80A10003),
 };
 
 constexpr uint32_t ORBIS_FIBER_MAGIC_START = 0xdef1649c;
