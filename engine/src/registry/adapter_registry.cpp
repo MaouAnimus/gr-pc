@@ -1,6 +1,7 @@
 #include "hle/registry/adapter_registry.h"
 #include "hle/fiber.h"
 #include "hle/kernel.h"
+#include "hle/timing.h"
 #include "hle/pad.h"
 #include "hle/video.h"
 #include "hle/audio.h"
@@ -8,6 +9,7 @@
 #include "hle/system_service.h"
 #include "hle/kernel/equeue.h"
 #include "hle/kernel/pthread_sync.h"
+#include "hle/kernel/event_flag.h"
 #include "hle/kernel/pthread.h"
 #include "hle/kernel/sema.h"
 #include "hle/kernel/file.h"
@@ -471,9 +473,7 @@ extern "C" GRAVITY_SYSV_ABI double hle_fmod(double x, double y) { return std::fm
 
 // libkernel process time & clock
 extern "C" GRAVITY_SYSV_ABI uint64_t hle_sceKernelGetProcessTime() {
-    static const auto start = std::chrono::steady_clock::now();
-    auto now = std::chrono::steady_clock::now();
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - start).count());
+    return timing::process_microseconds();
 }
 
 struct OrbisTimeval {
@@ -494,15 +494,15 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelGettimeofday(OrbisTimeval* tv, 
 }
 
 extern "C" GRAVITY_SYSV_ABI uint64_t hle_sceKernelReadTsc() {
-    return __rdtsc();
+    return timing::guest_tsc();
 }
 
 extern "C" GRAVITY_SYSV_ABI uint64_t hle_sceKernelGetTscFrequency() {
-    return 1600000000ULL; // PS4 Jaguar APU 1.6 GHz
+    return timing::tsc_frequency();
 }
 
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelUsleep(uint32_t useconds) {
-    Sleep(useconds / 1000 == 0 ? 1 : useconds / 1000);
+    timing::sleep_microseconds(useconds);
     return 0;
 }
 
@@ -534,33 +534,6 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_scePthreadMutexInit(void* mutex, const v
     const int result = pthread_sync::posix_mutex_init(static_cast<pthread_sync::Opaque*>(mutex),
         static_cast<const pthread_sync::Opaque*>(attr));
     return result ? static_cast<int32_t>(0x80020000U + result) : 0;
-}
-
-// libkernel EventFlags
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelCreateEventFlag(void* ef, const char* name, uint32_t attr,
-                                                                 uint64_t initPattern, const void* opt) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceKernelCreateEventFlag\n"); }
-    (void)ef; (void)name; (void)attr; (void)initPattern; (void)opt;
-    static std::atomic<int32_t> s_next_ef{1};
-    return s_next_ef.fetch_add(1);
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelDeleteEventFlag(int32_t ef) {
-    (void)ef;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelSetEventFlag(int32_t ef, uint64_t pattern) {
-    (void)ef; (void)pattern;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelClearEventFlag(int32_t ef, uint64_t pattern) {
-    (void)ef; (void)pattern;
-    return 0;
-}
-extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelWaitEventFlag(int32_t ef, uint64_t pattern, uint32_t mode,
-                                                               uint64_t* resultPattern, void* timeout) {
-    (void)ef; (void)mode; (void)timeout;
-    if (resultPattern) *resultPattern = pattern;
-    return 0;
 }
 
 // -------------------------------------------------------------------------
@@ -874,6 +847,7 @@ void AdapterRegistry::clear() {
         g_video_out.reset();
     }
     fios::reset();
+    event_flag::reset();
 }
 
 void AdapterRegistry::register_adapter(std::string_view nid, std::string_view library,
@@ -1138,11 +1112,14 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("4czppHBiriw", "libkernel", "sceKernelSignalSema", reinterpret_cast<uintptr_t>(&sema::sceKernelSignalSema));
     register_adapter("4DM06U2BNEY", "libkernel", "sceKernelCancelSema", reinterpret_cast<uintptr_t>(&sema::sceKernelCancelSema));
 
-    register_adapter("BpFoboUJoZU", "libkernel", "sceKernelCreateEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelCreateEventFlag));
-    register_adapter("8mql9OcQnd4", "libkernel", "sceKernelDeleteEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelDeleteEventFlag));
-    register_adapter("IOnSvHzqu6A", "libkernel", "sceKernelSetEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelSetEventFlag));
-    register_adapter("7uhBFWRAS60", "libkernel", "sceKernelClearEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelClearEventFlag));
-    register_adapter("JTvBflhYazQ", "libkernel", "sceKernelWaitEventFlag", reinterpret_cast<uintptr_t>(&hle_sceKernelWaitEventFlag));
+    register_adapter("BpFoboUJoZU", "libkernel", "sceKernelCreateEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelCreateEventFlag));
+    register_adapter("8mql9OcQnd4", "libkernel", "sceKernelDeleteEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelDeleteEventFlag));
+    register_adapter("IOnSvHzqu6A", "libkernel", "sceKernelSetEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelSetEventFlag));
+    register_adapter("7uhBFWRAS60", "libkernel", "sceKernelClearEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelClearEventFlag));
+    register_adapter("JTvBflhYazQ", "libkernel", "sceKernelWaitEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelWaitEventFlag));
+    register_adapter("9lvj5DjHZiA", "libkernel", "sceKernelPollEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelPollEventFlag));
+    register_adapter("PZku4ZrXJqg", "libkernel", "sceKernelCancelEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelCancelEventFlag));
+    register_adapter("s9-RaxukuzQ", "libkernel", "sceKernelCloseEventFlag", reinterpret_cast<uintptr_t>(&event_flag::sceKernelCloseEventFlag));
 
     // ---------------------------------------------------------------------
     // 3. libSceFiber (Cooperative fibers)

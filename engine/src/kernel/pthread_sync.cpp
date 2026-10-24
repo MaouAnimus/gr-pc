@@ -169,6 +169,10 @@ int cond_wait_internal(Opaque* cond_slot, Opaque* mutex_slot, const std::uint64_
     const auto thread = GetCurrentThreadId();
     unsigned saved_depth = 0;
 
+    // Serialize waiter registration with signal/broadcast before releasing the
+    // guest mutex. Otherwise a producer can signal in the gap and lose the wake.
+    std::unique_lock cond_lock(cond->state);
+    if (cond->deleted) return invalid;
     {
         std::lock_guard lock(mutex->state);
         if (mutex->deleted || mutex->owner != thread) return permission;
@@ -179,21 +183,15 @@ int cond_wait_internal(Opaque* cond_slot, Opaque* mutex_slot, const std::uint64_
     }
 
     bool timeout_occurred = false;
-    {
-        std::unique_lock cond_lock(cond->state);
-        if (cond->deleted) {
-            acquire(mutex_slot, false, nullptr);
-            return invalid;
-        }
-        ++cond->waiters;
-        if (micros) {
-            auto status = cond->cv.wait_for(cond_lock, std::chrono::microseconds(*micros));
-            if (status == std::cv_status::timeout) timeout_occurred = true;
-        } else {
-            cond->cv.wait(cond_lock);
-        }
-        --cond->waiters;
+    ++cond->waiters;
+    if (micros) {
+        auto status = cond->cv.wait_for(cond_lock, std::chrono::microseconds(*micros));
+        if (status == std::cv_status::timeout) timeout_occurred = true;
+    } else {
+        cond->cv.wait(cond_lock);
     }
+    --cond->waiters;
+    cond_lock.unlock();
 
     int err = acquire(mutex_slot, false, nullptr);
     if (err != 0) return err;
@@ -301,37 +299,42 @@ extern "C" GRAVITY_SYSV_ABI int posix_cond_timedwait(Opaque* cond, Opaque* mutex
     return posix_cond_reltimedwait(cond, mutex, rel_us);
 }
 
+namespace {
+int kernel_result(int result) {
+    return result ? static_cast<std::int32_t>(0x80020000U + static_cast<std::uint32_t>(result)) : 0;
+}
+}
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondInit(Opaque* cond, const Opaque* attr, const char* name) {
     (void)name;
-    return posix_cond_init(cond, attr);
+    return kernel_result(posix_cond_init(cond, attr));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondDestroy(Opaque* cond) {
-    return posix_cond_destroy(cond);
+    return kernel_result(posix_cond_destroy(cond));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondSignal(Opaque* cond) {
-    return posix_cond_signal(cond);
+    return kernel_result(posix_cond_signal(cond));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondBroadcast(Opaque* cond) {
-    return posix_cond_broadcast(cond);
+    return kernel_result(posix_cond_broadcast(cond));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondWait(Opaque* cond, Opaque* mutex) {
-    return posix_cond_wait(cond, mutex);
+    return kernel_result(posix_cond_wait(cond, mutex));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondTimedwait(Opaque* cond, Opaque* mutex, std::uint64_t usec) {
-    return posix_cond_reltimedwait(cond, mutex, usec);
+    return kernel_result(posix_cond_reltimedwait(cond, mutex, usec));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondattrInit(Opaque* attr) {
-    return posix_condattr_init(attr);
+    return kernel_result(posix_condattr_init(attr));
 }
 
 extern "C" GRAVITY_SYSV_ABI int scePthreadCondattrDestroy(Opaque* attr) {
-    return posix_condattr_destroy(attr);
+    return kernel_result(posix_condattr_destroy(attr));
 }
 }
 

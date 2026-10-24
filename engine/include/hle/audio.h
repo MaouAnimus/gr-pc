@@ -12,6 +12,13 @@ namespace gravity::hle::audio {
     // Get the singleton audio renderer instance.
     AudioRenderer& get_audio_renderer() noexcept;
 
+    // Stream 48kHz stereo 16-bit PCM buffer to host audio output via WASAPI.
+    // Lazily initializes the audio renderer if needed.
+    void output_master_audio(const void* pcm_data, std::uint32_t size_bytes) noexcept;
+
+    // Query whether the audio renderer is currently active.
+    bool is_audio_renderer_initialized() noexcept;
+
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wreturn-type-c-linkage"

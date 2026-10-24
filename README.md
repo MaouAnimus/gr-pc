@@ -58,3 +58,5 @@ El objetivo es un port Windows propio, con lógica x64 y subsistemas PC, sin un 
 Ver el [plan completo del port nativo](docs/PLAN_PORT_NATIVO_PC.md), la [estabilización](docs/ESTABILIZACION.md) y la [estructura](ESTRUCTURA_PROYECTO.md).
 
 El [informe del decodificador PM4 y la cola Vulkan](docs/LOTE_2_PM4_VULKAN.md) detalla el subconjunto soportado, las pruebas y los límites actuales.
+
+El [conector AvPlayer con Media Foundation](docs/AVPLAYER_MEDIA_FOUNDATION.md) decodifica H.264 y PCM, entrega vídeo temporizado a texturas Vulkan y documenta las pruebas con MP4 reales del juego a 1080p60 y los límites de integración pendientes.

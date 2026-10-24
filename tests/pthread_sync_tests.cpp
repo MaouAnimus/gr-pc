@@ -61,6 +61,42 @@ int main(int argc, char** argv) {
         CHECK(posix_mutexattr_destroy(&invalid) == 22);
         CHECK(posix_condattr_init(nullptr) == 22);
         CHECK(posix_cond_signal(reinterpret_cast<Opaque*>(1)) == 22);
+        constexpr auto kernel_invalid = static_cast<std::int32_t>(0x80020016U);
+        CHECK(scePthreadCondInit(nullptr, nullptr, "invalid") == kernel_invalid);
+        CHECK(scePthreadCondDestroy(&invalid) == kernel_invalid);
+        CHECK(scePthreadCondSignal(reinterpret_cast<Opaque*>(1)) == kernel_invalid);
+        CHECK(scePthreadCondBroadcast(reinterpret_cast<Opaque*>(1)) == kernel_invalid);
+        CHECK(scePthreadCondattrInit(nullptr) == kernel_invalid);
+        CHECK(scePthreadCondattrDestroy(&invalid) == kernel_invalid);
+    } else if (suite == "cond_handoff") {
+        Opaque cond{}, mutex{};
+        CHECK(posix_mutex_init(&mutex, nullptr) == 0);
+        CHECK(posix_cond_init(&cond, nullptr) == 0);
+        int turn = 0;
+        constexpr int rounds = 10000;
+        std::thread worker([&] {
+            CHECK(posix_mutex_lock(&mutex) == 0);
+            for (int i = 0; i < rounds; ++i) {
+                while (turn != 2 * i + 1)
+                    CHECK(posix_cond_reltimedwait(&cond, &mutex, 1000000) == 0);
+                ++turn;
+                CHECK(posix_cond_signal(&cond) == 0);
+            }
+            CHECK(posix_mutex_unlock(&mutex) == 0);
+        });
+        CHECK(posix_mutex_lock(&mutex) == 0);
+        for (int i = 0; i < rounds; ++i) {
+            CHECK(turn == 2 * i);
+            ++turn;
+            CHECK(posix_cond_signal(&cond) == 0);
+            while (turn != 2 * i + 2)
+                CHECK(posix_cond_reltimedwait(&cond, &mutex, 1000000) == 0);
+        }
+        CHECK(posix_mutex_unlock(&mutex) == 0);
+        worker.join();
+        CHECK(turn == 2 * rounds);
+        CHECK(posix_cond_destroy(&cond) == 0);
+        CHECK(posix_mutex_destroy(&mutex) == 0);
     } else if (suite == "cond") {
         Opaque cond_attr{};
         CHECK(posix_condattr_init(&cond_attr) == 0);
@@ -91,7 +127,10 @@ int main(int argc, char** argv) {
         CHECK(posix_mutex_lock(&mutex) == 0);
         int rc = posix_cond_reltimedwait(&cond, &mutex, 2000);
         CHECK(rc == 60); // ETIMEDOUT
+        CHECK(scePthreadCondTimedwait(&cond, &mutex, 2000) == static_cast<std::int32_t>(0x8002003cU));
         CHECK(posix_mutex_unlock(&mutex) == 0);
+        CHECK(scePthreadCondWait(&cond, &mutex) == static_cast<std::int32_t>(0x80020001U));
+        CHECK(scePthreadCondTimedwait(&cond, &mutex, 1) == static_cast<std::int32_t>(0x80020001U));
 
         // scePthreadCond wrappers
         CHECK(scePthreadCondSignal(&cond) == 0);

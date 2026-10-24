@@ -1,3 +1,41 @@
+## 2026-10-24 — Paso 3: Motor de Audio en Tiempo Real (libSceNgs2 + libSceAudio3d + WASAPI)
+
+- **Objetivo:** Implementar la síntesis y mezcla de audio multicanal en tiempo real (`libSceNgs2`), el posicionamiento espacial tridimensional con atenuación por distancia y paneo azimutal constante (`libSceAudio3d`), y la reproducción en vivo en el hardware de sonido del PC vía WASAPI a 48 kHz estéreo.
+
+- **Implementación HLE Detallada:**
+  - **Motor de Mezcla NGS2 (`engine/src/audio/ngs2.cpp`, `engine/include/hle/audio/ngs2.h`):**
+    - Estructura `VoiceState` con control de estado (0=detenido, 1=reproduciendo, 2=pausado), volumen maestro, volumen estéreo independiente (izquierdo y derecho), tono/pitch, paneo (-1.0 a +1.0), generador de fase periódica y buffers de reproducción PCM.
+    - Asignación armónica cromática inicial para las 32 voces de cada rack (`220.0 * 2^(i/12)` Hz) para síntesis polifónica sin colisiones de fase.
+    - Implementación completa de los comandos de voz de Sony NGS2 en `sceNgs2VoiceControl`:
+      - `SCE_NGS2_VOICE_COMMAND_PLAY` (0): Inicio de reproducción.
+      - `SCE_NGS2_VOICE_COMMAND_PAUSE` (1): Pausa sin perder el cursor de reproducción.
+      - `SCE_NGS2_VOICE_COMMAND_STOP` (2): Detención y reinicio de cursores de fase/muestras.
+      - `SCE_NGS2_VOICE_COMMAND_SET_VOLUME` (3): Modulación de volumen escalar o estéreo independiente L/R.
+      - `SCE_NGS2_VOICE_COMMAND_SET_PITCH` (4): Modulación de tono/frecuencia (ratio 0.0001 a 16.0).
+      - `SCE_NGS2_VOICE_COMMAND_SET_PAN` (5): Paneo estéreo con preservación de potencia acústica constante (`sqrt(2) * [cos(angle), sin(angle)]`).
+      - `SCE_NGS2_VOICE_COMMAND_SET_BUFFER` (6): Reproducción de muestras PCM de 16 bits en bucle o un solo disparo.
+      - `SCE_NGS2_VOICE_COMMAND_SET_FREQ` (7): Modulación de frecuencia base en hercios.
+      - `SCE_NGS2_VOICE_COMMAND_SET_3D_POS` (8): Cálculo directo de posición espacial 3D sobre la voz relativo al oyente.
+    - En `sceNgs2SystemRender`:
+      - Mezcla acumulativa de todas las voces activas por rack en buffers de coma flotante.
+      - Conversión y saturación / clamp a rango de 16 bits firmado `[-32768, 32767]` evitando desbordamientos de enteros.
+      - Envío síncrono del bloque PCM renderizado al backend de salida host mediante `output_master_audio`.
+  - **Motor de Audio Espacial 3D (`engine/src/audio/audio3d.cpp`, `engine/include/hle/audio/audio3d.h`):**
+    - Estructura `Audio3DAttributes` que almacena posición tridimensional (X, Y, Z), velocidad, ganancia, distancia mínima, distancia máxima y factor de caída (roll-off).
+    - Estado global del oyente (cámara/Kat) con posición, vector frontal y vector superior (`set_audio3d_listener`, `get_audio3d_listener`).
+    - Ley de atenuación por distancia inversa con clamps (`min_dist / (min_dist + (dist - min_dist) * roll_off)`).
+    - Cálculo de ángulo azimutal en el plano horizontal (X/Z) y paneo estéreo constante de potencia para separación acústica realista.
+    - Soporte en `sceAudio3dObjectSetAttributes` y `sceAudio3dObjectGetAttributes` para persistir y consultar coordenadas y ganancias.
+  - **Integración con WASAPI (`engine/src/audio/audio.cpp`, `engine/include/hle/audio.h`):**
+    - Función de conveniencia `output_master_audio(pcm_data, size_bytes)` con inicialización perezosa automática a 48 kHz estéreo de 16 bits y protección contra entornos headless o sin dispositivos de audio conectados.
+
+- **Validación y Métricas:**
+  - **122/122 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (38.34s) como en **Release** (10.95s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - Suite de pruebas `tests/audio_advanced_tests.cpp` ampliada con 3 suites completas:
+    - `audio_advanced_ngs2`: prueba de ciclo de vida de voces, modulación de volumen, pitch, paneo hard-left / hard-right, buffers PCM, mezcla multi-voz con saturación y verificación de inicio en fase 0.
+    - `audio_advanced_audio3d`: prueba de almacenamiento de atributos, cálculo espacial en el centro (L=R), extremo izquierdo (R=0), extremo derecho (L=0) y objetos fuera de distancia máxima (ganancia 0).
+    - `audio_advanced_integration`: prueba de enlace directo entre comando 3D en NGS2 y paneo resultante en los canales izquierdo y derecho.
+
 ## 2026-10-24 — Pasos 1 y 2: Persistencia Real en Disco (SaveData / APPDATA) y Decodificación de Vídeo para Cinemáticas (libSceAvPlayer + WMF + Vulkan)
 
 - **Objetivo:** Ejecutar las Fases 1 y 2 del plan de jugabilidad:

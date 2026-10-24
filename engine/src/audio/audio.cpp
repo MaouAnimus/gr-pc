@@ -236,6 +236,8 @@ public:
     hle::Status sceNgs2Start() { return {hle::Error::unsupported}; }
     hle::Status sceNgs2Stop() { return {hle::Error::unsupported}; }
 
+    bool is_initialized() const noexcept { return initialized_; }
+
 private:
     DWORD owner_thread_{};
     bool initialized_;
@@ -256,6 +258,25 @@ AudioRenderer& get_audio_renderer() noexcept {
         g_audioRenderer = new AudioRenderer();
     }
     return *g_audioRenderer;
+}
+
+void output_master_audio(const void* pcm_data, std::uint32_t size_bytes) noexcept {
+    if (!pcm_data || size_bytes == 0) return;
+    AudioRenderer& ar = get_audio_renderer();
+    if (!ar.is_initialized()) {
+        static bool s_init_attempted = false;
+        if (!s_init_attempted) {
+            s_init_attempted = true;
+            (void)ar.initialize(48000, 2, 16, 0);
+        }
+    }
+    if (ar.is_initialized()) {
+        (void)ar.output(pcm_data, size_bytes);
+    }
+}
+
+bool is_audio_renderer_initialized() noexcept {
+    return get_audio_renderer().is_initialized();
 }
 
 // HLE function implementations

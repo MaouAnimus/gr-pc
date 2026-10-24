@@ -19,11 +19,40 @@ using Clock = std::chrono::steady_clock;
 constexpr std::int32_t no_data = static_cast<std::int32_t>(0x80540002U);
 void avplayer_vulkan_test(SceAvPlayerHandle handle);
 
+void raw_video_archive(const std::filesystem::path& root) {
+    std::ifstream file(root / "fixture.mp4", std::ios::binary | std::ios::ate);
+    CHECK(file.is_open()); const auto size = static_cast<std::size_t>(file.tellg());
+    std::vector<std::uint8_t> movie(size); file.seekg(0); CHECK(file.read(reinterpret_cast<char*>(movie.data()), size));
+    constexpr std::size_t block = 65536;
+    const std::string manifest = "mp4/fixture.mp4\n";
+    const auto blocks = (movie.size() + block - 1) / block;
+    const auto toc = 32 + 60 + 2 * (blocks + 1);
+    std::vector<std::uint8_t> archive(toc + manifest.size() + movie.size());
+    auto be = [&](std::size_t offset, std::uint64_t value, unsigned bytes) {
+        for (unsigned i = 0; i < bytes; ++i) archive[offset + bytes - i - 1] = static_cast<std::uint8_t>(value >> (i * 8));
+    };
+    std::memcpy(archive.data(), "PSAR", 4); be(4, 0x10004, 4); std::memcpy(archive.data() + 8, "zlib", 4);
+    be(12, toc, 4); be(16, 30, 4); be(20, 2, 4); be(24, block, 4);
+    be(32 + 16, 0, 4); be(32 + 20, manifest.size(), 5); be(32 + 25, toc, 5);
+    be(62 + 16, 1, 4); be(62 + 20, movie.size(), 5); be(62 + 25, toc + manifest.size(), 5);
+    be(92, manifest.size(), 2);
+    for (std::size_t i = 0; i < blocks; ++i) {
+        const auto length = (std::min)(block, movie.size() - i * block);
+        be(94 + i * 2, length == block ? 0 : length, 2);
+    }
+    std::memcpy(archive.data() + toc, manifest.data(), manifest.size());
+    std::memcpy(archive.data() + toc + manifest.size(), movie.data(), movie.size());
+    std::filesystem::create_directories(root / "arc");
+    std::ofstream out(root / "arc" / "video.psarc", std::ios::binary);
+    CHECK(out.write(reinterpret_cast<const char*>(archive.data()), archive.size()));
+}
+
 struct Fixture {
     std::filesystem::path root = std::filesystem::temp_directory_path() / ("gravity_avplayer_" + std::to_string(GetCurrentProcessId()));
-    Fixture(bool audio = true, std::uint32_t width = 64, std::uint32_t height = 48, std::uint32_t frames = 12) {
+    Fixture(bool audio = true, std::uint32_t width = 64, std::uint32_t height = 48, std::uint32_t frames = 12, bool archive = false) {
         std::filesystem::create_directories(root);
         create_avplayer_fixture(root / "fixture.mp4", width, height, frames, audio);
+        if (archive) raw_video_archive(root);
         gravity::hle::fs::initialize_vfs(root.wstring());
         gravity::hle::fs::vfs_mount_path("/avtest", root);
     }
@@ -74,10 +103,11 @@ void invalid_inputs() {
     CHECK(sceAvPlayerGetAudioData(p, nullptr) != 0); CHECK(sceAvPlayerGetVideoDataEx(p, &frame) == no_data);
     CHECK(sceAvPlayerClose(p) == 0);
 }
-void playback() {
-    Fixture fixture;
+void playback(bool archive = false) {
+    Fixture fixture(true, 64, 48, 12, archive);
     auto p = sceAvPlayerInit(nullptr); CHECK(p);
-    CHECK(sceAvPlayerAddSource(p, "/app0/fixture.mp4") == 0); CHECK(sceAvPlayerStreamCount(p) == 2);
+    CHECK(sceAvPlayerAddSource(p, archive ? "/app0/mp4/fixture.mp4" : "/app0/fixture.mp4") == 0);
+    CHECK(sceAvPlayerStreamCount(p) == 2);
     SceAvPlayerStreamInfo stream{};
     CHECK(sceAvPlayerGetStreamInfo(p, 0, &stream) == 0);
     CHECK(stream.type == 0 && stream.width == 64 && stream.height == 48 && stream.framerate == 60);
@@ -159,6 +189,9 @@ int content(const std::filesystem::path& root) {
     }
     std::printf("Game manifest: %zu candidate video files\n", movies.size());
     if (movies.empty()) return 77;
+    std::stable_sort(movies.begin(), movies.end(), [](const auto& a, const auto& b) {
+        return (a == "mp4/ep00-01c.mp4") > (b == "mp4/ep00-01c.mp4");
+    });
     gravity::hle::fs::initialize_vfs(root.wstring());
     for (const auto& movie : movies) {
         MediaDecoder decoder; MediaMetadata metadata;
@@ -166,13 +199,18 @@ int content(const std::filesystem::path& root) {
         if (!decoder.open(path, metadata)) { std::printf("Unsupported media: %s\n", path.c_str()); continue; }
         std::printf("Media: %s, %ux%u, %.3f fps\n", path.c_str(), metadata.width, metadata.height, metadata.frame_rate);
         if (!metadata.video) continue;
-        for (unsigned attempt = 0; attempt < 20; ++attempt) {
+        const auto start = Clock::now(); unsigned frames{};
+        for (unsigned attempt = 0; attempt < 140; ++attempt) {
             const auto sample = decoder.read(true).get();
             if (sample.status == MediaSample::Status::again) continue;
+            if (sample.status == MediaSample::Status::end && frames) break;
             CHECK(sample.status == MediaSample::Status::data && !sample.bytes.empty());
-            std::puts("Game media first frame decoded through VFS/Media Foundation");
-            return 0;
+            if (++frames == 120) break;
         }
+        CHECK(frames);
+        const auto elapsed = std::chrono::duration<double>(Clock::now() - start).count();
+        std::printf("Game media decoded through VFS/Media Foundation: %u frames, %.3f s, %.1f fps\n", frames, elapsed, frames / elapsed);
+        return 0;
     }
     return 1;
 }
@@ -181,6 +219,7 @@ int main(int argc, char** argv) {
     if (suite == "lifecycle") lifecycle();
     else if (suite == "invalid") invalid_inputs();
     else if (suite == "playback") playback();
+    else if (suite == "psarc") playback(true);
     else if (suite == "looping") looping();
     else if (suite == "performance") performance();
     else if (suite == "content") return content(argc > 2 ? argv[2] : "../../CUSA01130");

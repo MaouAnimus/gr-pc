@@ -2,6 +2,7 @@
 #include "hle/gnm.h"
 #include "hle/gnm/shader_pipeline.h"
 #include "hle/kernel.h"
+#include "hle/timing.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
@@ -31,7 +32,7 @@ public:
         mode_width_ = 1920;
         mode_height_ = 1080;
         mode_refresh_ = 60;
-        last_frame_time_ = std::chrono::steady_clock::now();
+        frame_pacer_.reset();
 
         current_frame_ = 0;
         presented_frames_ = 0;
@@ -237,17 +238,9 @@ public:
             }
         }
 
+        frame_pacer_.wait();
         if (!headless_ && device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE) {
             render_frame();
-        } else {
-            // Emulate 60 FPS pacing in headless / software fallback
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_frame_time_).count();
-            constexpr int64_t frame_micros = 16666; // 60 Hz
-            if (elapsed < frame_micros) {
-                std::this_thread::sleep_for(std::chrono::microseconds(frame_micros - elapsed));
-            }
-            last_frame_time_ = std::chrono::steady_clock::now();
         }
     }
 
@@ -562,7 +555,7 @@ private:
     uint32_t mode_width_{1920};
     uint32_t mode_height_{1080};
     uint32_t mode_refresh_{60};
-    std::chrono::steady_clock::time_point last_frame_time_{};
+    timing::FramePacer frame_pacer_;
 };
 
 static VideoRenderer g_videoRenderer;
