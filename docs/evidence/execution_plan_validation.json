@@ -1,0 +1,30 @@
+{
+  "utc": "2026-10-23T11:34:14.687199+00:00",
+  "product_playable": false,
+  "blocker": {
+    "symbol": "sceFiosInitialize",
+    "nid": "wAKZ-det+yo",
+    "library": "libSceFios2",
+    "caller_offset": "0x4fdc"
+  },
+  "configurations": {
+    "debug": {
+      "tests": 68,
+      "passed": 68,
+      "last_test_log": "out/debug/Testing/Temporary/LastTest.log",
+      "log_sha256": "40603b99e042f8b2a873fdade1a83821efc48a0f24aa945acf71ee62fb429f71",
+      "boot_evidence": "out/evidence/20261023T113039.713211Z_validated_batch_debug",
+      "executable_sha256": "d17721523a52ab604d2553198d7d61307cf3871853a6e73c4a943fd9ea64addd",
+      "boot_exit_code": 3
+    },
+    "release": {
+      "tests": 68,
+      "passed": 68,
+      "last_test_log": "out/release/Testing/Temporary/LastTest.log",
+      "log_sha256": "104b2e5e8102e49c3a98f4d993a6ad544f324d65f61db99355fd7866694b5d63",
+      "boot_evidence": "out/evidence/20261023T113036.193212Z_validated_batch_release",
+      "executable_sha256": "2ed073b766335980cc1fc6210c87d51af828de66cebedd36625ff3894a069e27",
+      "boot_exit_code": 3
+    }
+  }
+}
