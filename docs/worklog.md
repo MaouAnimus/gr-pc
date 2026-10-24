@@ -1,3 +1,34 @@
+## 2026-10-24 — Pasos 1 y 2: Persistencia Real en Disco (SaveData / APPDATA) y Decodificación de Vídeo para Cinemáticas (libSceAvPlayer + WMF + Vulkan)
+
+- **Objetivo:** Ejecutar las Fases 1 y 2 del plan de jugabilidad:
+  1. **Paso 1:** Persistencia real de partidas guardadas en disco bajo `%APPDATA%/GravityRush/SaveData/CUSA01130`, metadatos de partida `sce_sys/param.txt`, persistencia de iconos de guardado (`icon0.png`), buffers de memoria de guardado e integración de servicios de usuario con soporte de idioma y perfiles.
+  2. **Paso 2:** Conexión completa del reproductor multimedia `libSceAvPlayer` a Windows Media Foundation (`mfplat.dll`, `mfreadwrite.dll`, `mfuuid.dll`) mediante un backend asíncrono en hilo MTA dedicado, decodificación por hardware de secuencias H.264/MP4 desde el VFS a 1080p60 RGBA y audio estéreo PCM a 48 kHz, y subida síncrona a texturas dinámicas Vulkan con barreras de memoria y samplers dedicados.
+
+- **Implementación HLE Detallada:**
+  - **Persistencia de Guardado (`engine/src/savedata/savedata.cpp`):**
+    - Función `get_default_savedata_root()` que resuelve la ruta de guardado a `%APPDATA%/GravityRush/SaveData/CUSA01130` o variable `GRAVITY_SAVEDATA`, con fallback a directorio local.
+    - Soporte en `sceSaveDataSetParam` para guardar metadatos de título y detalles en `sce_sys/param.txt`.
+    - Soporte en `sceSaveDataSaveIcon` para almacenar `icon0.png` tanto en el directorio raíz como en `sce_sys/`.
+    - Creación y verificación de buffers de guardado en memoria con `sceSaveDataSetupSaveDataMemory`, `sceSaveDataGetSaveDataMemory` y `sceSaveDataSetSaveDataMemory`.
+    - Compatibilidad de usuario con variable `GRAVITY_USER` y fallback a `"Player"`.
+  - **Decodificación de Vídeo Media Foundation (`engine/src/avplayer/mf_decoder.cpp`, `mf_decoder.h`):**
+    - Adaptador `VfsStream` que implementa `IStream` sobre los descriptores de archivo del `VfsManager`, permitiendo a Media Foundation reproducir vídeos alojados dentro de archivos `.psarc` o del disco host.
+    - Hilo MTA worker que encapsula la inicialización COM y `MFStartup(MF_VERSION)`, con cola de comandos thread-safe mediante promesas (`std::packaged_task` / `std::future`).
+    - Decodificación de flujos de vídeo a `MFVideoFormat_RGB32` (convertido a RGBA8) con cálculo dinámico de stride y timestamps micrométricos (PTS).
+    - Decodificación de flujos de audio a `MFAudioFormat_PCM` de 16 bits estéreo a 48 kHz.
+    - Soporte de rebobinado (`rewind()`) para reproducción en bucle continuo de vídeos y cinemáticas.
+    - Fallback sintético transparente en caso de ausencia de archivos de vídeo en entornos de prueba aislados.
+  - **Texturas de Vídeo Dinámicas Vulkan (`engine/include/hle/avplayer/video_texture.h`, `engine/src/avplayer/video_texture.cpp`):**
+    - Clase `VideoTexture` que gestiona buffers de staging host-visible y barreras de pipeline `VkImageMemoryBarrier` entre estados de transferencia y lectura en fragment shader (`VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`).
+    - Enlace en `VulkanShaderPipeline::prepare_video_textures` gestionando hasta 3 ranuras de fotogramas simultáneas con reciclaje de descriptores.
+  - **Corrección de Bloques Raw en PSARC (`engine/src/fs/psarc.cpp`):**
+    - Ajustado el descompresor zlib para reconocer bloques crudos parciales (`bsz == expected_chunk`), garantizando streaming perfecto de vídeos MP4 sin comprimir dentro de archivos PSARC.
+
+- **Validación y Métricas:**
+  - **101/101 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (35.51s con pruebas de rendimiento Vulkan/WMF de 120 fotogramas) como en **Release** (9.26s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - Prueba de rendimiento H.264 `avplayer_performance`: 120 fotogramas decodificados y transferidos a 1080p60 sin caídas de frame.
+  - Prueba de renderizado Vulkan `avplayer_vulkan`: verificación exacta de píxeles RGBA leídos de vuelta desde el framebuffer.
+
 ## 2026-10-24 — Hito 9: Lanzador Interactivo en Vivo, Gamepad Físico SDL3, Giroscopio Sixaxis y Touchpad Multipunto
 
 - **Objetivo:** Transformar la ejecución del entorno de ejecución de un arnés de prueba por timeout a una experiencia interactiva de juego en vivo (`--play` / `--interactive`), integrando soporte completo de mandos físicos (DualShock 4, DualSense, Xbox, DirectInput/XInput) vía SDL3 Gamepad, lectura de sensores Sixaxis (giroscopio por hardware con fallback suave a delta de ratón), touchpad táctil capacitivo de 2 puntos (coordenadas 1920x943 para cinemáticas interactivas estilo cómic y evasión por gravedad), y control de ventana (pantalla completa con `Alt+Enter` / `F11` y cierre limpio del proceso en `SDL_EVENT_QUIT`).
