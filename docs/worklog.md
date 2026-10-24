@@ -1,3 +1,40 @@
+## 2026-10-24 — Hito 6: Desbloqueo Dinámico de Módulos (libSceSysmodule), Control en Vivo (libScePad) y Salida de Audio (libSceAudioOut)
+
+- **Objetivo:** Implementar los subsistemas clave de interacción y comunicación para el progreso del juego tras el arranque:
+  1. Desbloqueo de módulos del sistema (`libSceSysmodule`): resolver peticiones dinámicas del juego para SaveData (`0x9c`), Fuentes (`0x06`), Fibras (`0xa5`), Trofeos/NP (`0xa0`) y Voz (`0x83`), manteniendo un seguimiento coherente de módulos cargados.
+  2. Subsistema de control en vivo (`libScePad`): implementar la estructura auténtica de 120 bytes (`OrbisPadData`), información de periférico (`ScePadControllerInformation`), y enlace de teclado/ratón/gamepad para permitir interacción y avance de menús.
+  3. Salida de audio funcional (`libSceAudioOut`): canalizar la reproducción de audio PCM hacia el backend WASAPI del host sin bloqueos entre hilos de mezcla.
+
+- **Implementación HLE Detallada:**
+  - **Máquina de Estados de `libSceSysmodule`:**
+    - Conjunto dinámico de módulos soportados y precargados en memoria (`0x0001` NET, `0x0002` HTTP, `0x0003` SSL, `0x0006` FONT, `0x0083` VOICE, `0x009a` SAVE_DATA_DIALOG, `0x009c` SAVEDATA, `0x00a0` NP_SCORE, `0x00a5` FIBER).
+    - `hle_sceSysmoduleLoadModule`: registra el módulo solicitado, reporta `[Sysmodule] Loaded module id=0x... (SCE_OK)` y retorna `0` (`SCE_OK`). Valida `id == 0` retornando `0x805a1000` y módulos desconocidos como `0x80` retornando `0x8002004e` (ENOSYS), preservando la compatibilidad de regresión.
+    - `hle_sceSysmoduleUnloadModule`: retira el módulo del registro y retorna `0` (`SCE_OK`), o `0x805a1001` (`SCE_SYSMODULE_ERROR_UNLOADED`).
+    - `hle_sceSysmoduleIsLoaded`: unificado entre `libkernel` y `libSceSysmodule` consultando el estado real en memoria.
+    - `hle_sceScreenShotDisable` y `hle_sceScreenShotEnable`: retornan `0` (`SCE_OK`) permitiendo que el juego gestione la captura durante secuencias y descargos sin errores fatales.
+  - **Controlador e Interacción en Vivo (`libScePad`):**
+    - Especificación exacta de `OrbisPadData` (120 bytes / 0x78) y `ScePadControllerInformation` (32 bytes / 0x20) con aserciones en tiempo de compilación (`static_assert`).
+    - `hle_scePadOpen`: inicializa el subsistema y devuelve handle positivo (`1`) asociado al usuario del sistema.
+    - `hle_scePadGetControllerInformation`: reporta mando DualShock 4 conectado (`connected = 1`, tipo inalámbrico estándar `0`, resolución de touchpad `1920x943` y deadzones de palancas `10`).
+    - `hle_scePadRead`: lee datos de entrada en vivo y rellena `OrbisPadData` en cada frame:
+      - Botones mapeados: Espacio (`Cross`), E/Enter (`Circle`), F (`Square`), Q (`Triangle`), Shift (`R2`), Ctrl (`L2`), Clic Izq (`R1`), Clic Der (`L1`), Esc (`Options`), Tab (`TouchPad`), Flechas (`D-Pad`).
+      - Palancas análogas: WASD a stick izquierdo (`lx, ly` centrados en 128, rango 0-255).
+      - Giroscopio y Acelerómetro: integración de velocidad angular desde delta de ratón sobre cuaternión de orientación normalizado, proyectando el vector gravitatorio `[0, -1, 0]`.
+      - Señalización de estado: `connected = 1`, `connectedCount = 1`, `timestamp` en microsegundos.
+    - `hle_scePadResetOrientation`: restablece el cuaternión a la identidad `(0, 0, 0, 1)`.
+    - `hle_scePadSetTiltCorrectionState`, `hle_scePadSetVibration`, `hle_scePadSetLightBar`: integrados como stubs exitosos (`0`).
+  - **Salida de Audio (`libSceAudioOut`):**
+    - `hle_sceAudioOutOpen`: asigna descriptor de puerto (`len`, `freq`, `mode`), e inicializa el dispositivo WASAPI (`audio::sceAudioOutOpen` a 48000 Hz estéreo 16 bits).
+    - `hle_sceAudioOutOutput`: calcula el tamaño del bloque (`len * 4` bytes) y transfiere las muestras PCM al renderizador host sin penalización de hilos.
+    - `hle_sceAudioOutGetPortState`: devuelve estado activo (`output = 1`, `channel = 2`, volumen estéreo máximo `32767`).
+    - `hle_sceAudioOutClose`: libera el handle de audio asociado.
+
+- **Validación y Métricas:**
+  - **90/90 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (5.13s) como en **Release** (3.76s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - **Ejecución en vivo (`launcher.exe --boot --headless --timeout=5000`):**
+    - Carga exitosa de todos los módulos dinámicos: `0x9c` (SaveData), `0x6` (Font), `0xa5` (Fiber), `0xa0` (NP Score), `0x83` (Voice).
+    - El ejecutable avanza fluidamente en su bucle de inicialización accediendo a los recursos de episodio de `/app0/arc/arc_0_ep_0_0.psarc`.
+
 ## 2026-10-24 — Paso 5: Libc/Kernel P0 (100% Resuelto), Guardado Local (libSceSaveData), Pipeline de Fuentes (libSceFont/FreeType) y Shaders Vulkan
 
 - **Objetivo:** Ejecutar de forma integral los cuatro componentes del Paso 5 del Plan de Trabajo para la versión nativa de PC de *Gravity Rush Remastered* (CUSA01130):

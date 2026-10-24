@@ -274,4 +274,78 @@ extern "C" GRAVITY_SYSV_ABI int32_t scePadGetBatteryInfo(int32_t port, uint8_t* 
     return 0;
 }
 
+void resetOrientation() noexcept {
+    std::lock_guard<hle::Mutex> lock(g_padMutex);
+    g_orientation = Quat{};
+    g_emaDX = 0.0f;
+    g_emaDY = 0.0f;
+}
+
+int32_t getControllerInformation(int32_t handle, ScePadControllerInformation* info) {
+    if (!info || handle <= 0) return -1;
+    std::memset(info, 0, sizeof(ScePadControllerInformation));
+    info->touchPadPixelDensity = 1.0f;
+    info->touchPadResolutionX = 1920;
+    info->touchPadResolutionY = 943;
+    info->stickDeadzoneLeft = 10;
+    info->stickDeadzoneRight = 10;
+    info->connectionType = 0; // standard wireless DS4
+    info->connected = 1;      // controller is connected
+    info->deviceClass = 0;    // standard
+    return 0;
+}
+
+int32_t readPadData(int32_t handle, OrbisPadData* data, int32_t count) {
+    if (!data || count <= 0 || handle <= 0) return -1;
+    std::lock_guard<hle::Mutex> lock(g_padMutex);
+    if (!g_initialized) {
+        g_initialized = true;
+        g_lastTime = std::chrono::high_resolution_clock::now();
+        GetCursorPos(&g_lastMousePos);
+    }
+
+    auto now = std::chrono::high_resolution_clock::now();
+    float dt = std::chrono::duration<float>(now - g_lastTime).count();
+    uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+    g_lastTime = now;
+
+    float dx = 0.0f, dy = 0.0f;
+    updateMouseDelta(dx, dy, dt);
+
+    uint64_t buttons = 0;
+    uint8_t lx = 128, ly = 128, rx = 128, ry = 128, l2 = 0, r2 = 0;
+    pollKeyboard(buttons, lx, ly, rx, ry, l2, r2);
+
+    float accel[3]{0.0f, 0.0f, 0.0f};
+    float gx = 0.0f, gy = -1.0f, gz = 0.0f;
+    g_orientation.transform_vec(gx, gy, gz, accel[0], accel[1], accel[2]);
+
+    float gyro[3]{dy * g_sensitivity, 0.0f, dx * g_sensitivity};
+
+    for (int32_t i = 0; i < count; ++i) {
+        std::memset(&data[i], 0, sizeof(OrbisPadData));
+        data[i].buttons = static_cast<uint32_t>(buttons);
+        data[i].lx = lx;
+        data[i].ly = ly;
+        data[i].rx = rx;
+        data[i].ry = ry;
+        data[i].l2 = l2;
+        data[i].r2 = r2;
+        data[i].orientation[0] = g_orientation.x;
+        data[i].orientation[1] = g_orientation.y;
+        data[i].orientation[2] = g_orientation.z;
+        data[i].orientation[3] = g_orientation.w;
+        data[i].accel[0] = accel[0];
+        data[i].accel[1] = accel[1];
+        data[i].accel[2] = accel[2];
+        data[i].angularVelocity[0] = gyro[0];
+        data[i].angularVelocity[1] = gyro[1];
+        data[i].angularVelocity[2] = gyro[2];
+        data[i].connected = 1;
+        data[i].connectedCount = 1;
+        data[i].timestamp = timestamp;
+    }
+    return count;
+}
+
 } // namespace gravity::hle::pad

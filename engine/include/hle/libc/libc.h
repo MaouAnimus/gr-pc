@@ -115,7 +115,6 @@ GRAVITY_SYSV_ABI std::int64_t hle_sceKernelWrite(int fd, const void* buf, std::s
 GRAVITY_SYSV_ABI int          hle_sceKernelStat(const char* path, void* out_stat);
 GRAVITY_SYSV_ABI int          hle_sceKernelGetdents(int fd, char* buf, int nbytes);
 GRAVITY_SYSV_ABI void         hle_scePthreadExit(void* value_ptr);
-GRAVITY_SYSV_ABI int          hle_sceSysmoduleIsLoaded(std::uint16_t id);
 GRAVITY_SYSV_ABI void*        hle_tls_get_addr(const std::size_t ti[2]);
 
 // Setjmp & Longjmp

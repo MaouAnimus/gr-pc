@@ -578,11 +578,6 @@ GRAVITY_SYSV_ABI void hle_scePthreadExit(void* value_ptr) {
     ExitThread(0);
 }
 
-GRAVITY_SYSV_ABI int hle_sceSysmoduleIsLoaded(std::uint16_t id) {
-    (void)id;
-    return 0;
-}
-
 GRAVITY_SYSV_ABI void* hle_tls_get_addr(const std::size_t ti[2]) {
     if (!ti) return nullptr;
     void* tp = NativeTls::current_thread_pointer();

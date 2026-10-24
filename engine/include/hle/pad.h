@@ -86,6 +86,62 @@ namespace gravity::hle::pad {
         uint64_t timestamp;
     };
 
+    // Authentic 120-byte Orbis DualShock 4 structure
+    struct OrbisPadTouchPoint {
+        uint16_t x;
+        uint16_t y;
+        uint8_t  id;
+        uint8_t  reserve[3];
+    };
+
+    struct OrbisPadTouchData {
+        uint8_t  touchNum;
+        uint8_t  reserve[3];
+        uint32_t reserve1;
+        OrbisPadTouchPoint touch[2];
+    };
+
+    struct OrbisPadData {
+        uint32_t buttons;
+        uint8_t  lx;
+        uint8_t  ly;
+        uint8_t  rx;
+        uint8_t  ry;
+        uint8_t  l2;
+        uint8_t  r2;
+        uint8_t  padding[2];
+        float    orientation[4]; // x, y, z, w
+        float    accel[3];       // x, y, z
+        float    angularVelocity[3]; // x, y, z
+        OrbisPadTouchData touch;
+        uint8_t  connected;
+        uint8_t  padding2[3];
+        uint32_t reserve[2];
+        uint64_t timestamp;
+        uint8_t  extensionData[16];
+        uint8_t  connectedCount;
+        uint8_t  reserve2[7];
+    };
+    static_assert(sizeof(OrbisPadData) == 120, "OrbisPadData must be 120 bytes");
+
+    struct ScePadControllerInformation {
+        float    touchPadPixelDensity;
+        uint16_t touchPadResolutionX;
+        uint16_t touchPadResolutionY;
+        uint8_t  stickDeadzoneLeft;
+        uint8_t  stickDeadzoneRight;
+        uint8_t  connectionType;
+        uint8_t  connected;
+        uint8_t  deviceClass;
+        uint8_t  reserve[19];
+    };
+    static_assert(sizeof(ScePadControllerInformation) == 32, "ScePadControllerInformation must be 32 bytes");
+
+    // Live input functions
+    int32_t readPadData(int32_t handle, OrbisPadData* data, int32_t count);
+    int32_t getControllerInformation(int32_t handle, ScePadControllerInformation* info);
+    void resetOrientation() noexcept;
+
     // HLE functions (SysV ABI)
     extern "C" GRAVITY_SYSV_ABI int32_t scePadInit();
     extern "C" GRAVITY_SYSV_ABI int32_t scePadEnd();

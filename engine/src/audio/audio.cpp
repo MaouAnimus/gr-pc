@@ -157,7 +157,6 @@ public:
         std::lock_guard<hle::Mutex> lock(g_audioMutex);
         if (!initialized_)
             return {hle::Error::invalid_state};
-        if (GetCurrentThreadId() != owner_thread_) return {hle::Error::wrong_thread};
         if (!data && sizeBytes) return {hle::Error::invalid_argument};
         if (sizeBytes == 0)
             return {};

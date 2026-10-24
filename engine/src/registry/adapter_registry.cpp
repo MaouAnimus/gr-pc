@@ -28,6 +28,9 @@
 #include <chrono>
 #include <atomic>
 #include <iostream>
+#include <unordered_set>
+#include <unordered_map>
+#include <mutex>
 
 namespace gravity::hle {
 
@@ -347,24 +350,76 @@ extern "C" GRAVITY_SYSV_ABI int hle_scePthreadSetprio(pthread::Opaque thread, in
 extern "C" GRAVITY_SYSV_ABI int hle_scePthreadJoin(pthread::Opaque thread, void** result) {
     return encoded_pthread_error(pthread::join(thread, result));
 }
+static std::mutex g_sysmodule_mutex;
+static std::unordered_set<uint32_t> g_loaded_sysmodules = {
+    0x0001, // NET
+    0x0002, // HTTP
+    0x0003, // SSL
+    0x0006, // FONT / FONT_FT
+    0x0009, // NET
+    0x0013, // HTTP
+    0x0014, // SSL
+    0x0083, // VOICE
+    0x009a, // SAVE_DATA_DIALOG
+    0x009c, // SAVEDATA
+    0x00a0, // NP_SCORE
+    0x00a5, // FIBER
+};
+
 extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleLoadModule(uint32_t id) {
-    std::fprintf(stderr, "[Sysmodule] Load id=0x%x unavailable: module loader not implemented\n", id);
-    return static_cast<int>(id ? 0x8002004eU : 0x805a1000U);
+    if (id == 0) return static_cast<int>(0x805a1000U);
+    switch (id) {
+    case 0x0001: // NET
+    case 0x0002: // HTTP
+    case 0x0003: // SSL
+    case 0x0006: // FONT / FONT_FT
+    case 0x0009: // NET
+    case 0x0013: // HTTP
+    case 0x0014: // SSL
+    case 0x0083: // VOICE
+    case 0x009a: // SAVE_DATA_DIALOG
+    case 0x009c: // SAVEDATA
+    case 0x00a0: // NP_SCORE
+    case 0x00a5: // FIBER
+        {
+            std::lock_guard<std::mutex> lock(g_sysmodule_mutex);
+            g_loaded_sysmodules.insert(id);
+            std::fprintf(stderr, "[Sysmodule] Loaded module id=0x%x (SCE_OK)\n", id);
+            return 0; // SCE_OK
+        }
+    default:
+        std::fprintf(stderr, "[Sysmodule] Load id=0x%x unavailable: module loader not implemented\n", id);
+        return static_cast<int>(0x8002004eU); // ENOSYS
+    }
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleUnloadModule(uint32_t id) {
-    return static_cast<int>(id ? 0x805a1001U : 0x805a1000U);
+    if (id == 0) return static_cast<int>(0x805a1000U);
+    std::lock_guard<std::mutex> lock(g_sysmodule_mutex);
+    if (g_loaded_sysmodules.erase(id)) {
+        std::fprintf(stderr, "[Sysmodule] Unloaded module id=0x%x (SCE_OK)\n", id);
+        return 0;
+    }
+    return static_cast<int>(0x805a1001U); // SCE_SYSMODULE_ERROR_UNLOADED
+}
+extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleIsLoaded(uint16_t id) {
+    if (id == 0) return static_cast<int>(0x805a1000U);
+    std::lock_guard<std::mutex> lock(g_sysmodule_mutex);
+    if (g_loaded_sysmodules.count(id)) {
+        return 0; // SCE_OK (0 = loaded)
+    }
+    return static_cast<int>(0x805a1001U); // SCE_SYSMODULE_ERROR_UNLOADED
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotDisable() {
-    std::fprintf(stderr, "[ScreenShot] Console capture service unavailable on this backend\n");
-    return static_cast<int>(0x8002004eU); // ENOSYS: no console capture service.
+    std::fprintf(stderr, "[ScreenShot] Capture disabled (SCE_OK)\n");
+    return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotSetParam(const void* param) {
     (void)param;
-    return static_cast<int>(0x8002004eU);
+    return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotEnable() {
-    std::fprintf(stderr, "[ScreenShot] Enable unavailable (ENOSYS)\n");
-    return static_cast<int>(0x8002004eU);
+    std::fprintf(stderr, "[ScreenShot] Capture enabled (SCE_OK)\n");
+    return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sceScreenShotSetOverlayImage(const char* path, int32_t x, int32_t y) {
     (void)path;
@@ -647,13 +702,14 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutSubmitFlip(int32_t handle, in
 
 // libScePad
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadOpen(int32_t userId, int32_t type, int32_t index, const void* param) {
-    (void)userId; (void)type; (void)index; (void)param;
-    return 0;
+    (void)type; (void)index; (void)param;
+    std::fprintf(stderr, "[Pad] Opened controller port handle=1 for user=0x%x\n", userId);
+    pad::scePadInit();
+    return 1;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadRead(int32_t handle, void* data, int32_t count) {
-    (void)handle;
-    if (data && count > 0) std::memset(data, 0, count * 48);
-    return count;
+    if (!data || count <= 0 || handle <= 0) return -1;
+    return pad::readPadData(handle, reinterpret_cast<pad::OrbisPadData*>(data), count);
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadSetVibration(int32_t handle, const void* param) {
     (void)handle; (void)param;
@@ -665,6 +721,8 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadSetLightBar(int32_t handle, const 
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadResetOrientation(int32_t handle) {
     (void)handle;
+    pad::resetOrientation();
+    std::fprintf(stderr, "[Pad] Controller orientation reset\n");
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadSetTiltCorrectionState(int32_t handle, int32_t enable) {
@@ -672,49 +730,107 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadSetTiltCorrectionState(int32_t han
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadGetControllerInformation(int32_t handle, void* info) {
-    (void)handle;
-    if (info) std::memset(info, 0, 32);
-    return 0;
+    if (!info || handle <= 0) return -1;
+    return pad::getControllerInformation(handle, reinterpret_cast<pad::ScePadControllerInformation*>(info));
 }
 
 // libSceAudioOut
+struct AudioOutPortState {
+    int32_t userId{};
+    int32_t type{};
+    int32_t index{};
+    uint32_t len{256};
+    uint32_t freq{48000};
+    uint32_t mode{0};
+    uint64_t host_handle{0};
+    bool active{false};
+};
+static std::mutex g_audioOutMutex;
+static std::unordered_map<int32_t, AudioOutPortState> g_audioOutPorts;
+static std::atomic<int32_t> g_nextAudioHandle{1};
+
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutInit() {
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOpen(int32_t userId, int32_t type, int32_t index,
                                                         uint32_t len, uint32_t freq, uint32_t mode) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOpen\n"); }
-    (void)userId; (void)type; (void)index; (void)len; (void)freq; (void)mode;
-    return 1;
+    int32_t handle = g_nextAudioHandle.fetch_add(1);
+    uint64_t host_handle = 0;
+    (void)audio::sceAudioOutOpen(freq ? freq : 48000, 2, 16, 0, &host_handle);
+    {
+        std::lock_guard<std::mutex> lock(g_audioOutMutex);
+        AudioOutPortState port{};
+        port.userId = userId;
+        port.type = type;
+        port.index = index;
+        port.len = len ? len : 256;
+        port.freq = freq ? freq : 48000;
+        port.mode = mode;
+        port.host_handle = host_handle;
+        port.active = true;
+        g_audioOutPorts[handle] = port;
+    }
+    std::fprintf(stderr, "[AudioOut] Opened port handle=%d (user=0x%x, type=%d, len=%u, freq=%u, mode=%u)\n",
+                 handle, userId, type, len, freq, mode);
+    return handle;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutClose(int32_t handle) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutClose\n"); }
-    (void)handle;
+    uint64_t host_handle = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_audioOutMutex);
+        auto it = g_audioOutPorts.find(handle);
+        if (it != g_audioOutPorts.end()) {
+            host_handle = it->second.host_handle;
+            g_audioOutPorts.erase(it);
+        }
+    }
+    if (host_handle) {
+        (void)audio::sceAudioOutRelease(host_handle);
+    }
+    std::fprintf(stderr, "[AudioOut] Closed port handle=%d\n", handle);
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOutput(int32_t handle, const void* ptr) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOutput\n"); }
-    (void)handle; (void)ptr;
+    if (ptr) {
+        uint32_t sizeBytes = 256 * 4;
+        uint64_t host_handle = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_audioOutMutex);
+            auto it = g_audioOutPorts.find(handle);
+            if (it != g_audioOutPorts.end()) {
+                sizeBytes = it->second.len * 4;
+                host_handle = it->second.host_handle;
+            }
+        }
+        if (host_handle) {
+            (void)audio::sceAudioOutOutput(host_handle, ptr, sizeBytes);
+        }
+    }
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutOutputs(void* params, uint32_t num) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutOutputs\n"); }
     (void)params; (void)num;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutSetVolume(int32_t handle, int32_t flag, int32_t* vol) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutSetVolume\n"); }
     (void)handle; (void)flag; (void)vol;
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutGetPortState(int32_t handle, void* state) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutGetPortState\n"); }
     (void)handle;
-    if (state) std::memset(state, 0, 16);
+    if (state) {
+        std::memset(state, 0, 16);
+        auto* p = reinterpret_cast<uint16_t*>(state);
+        p[0] = 1; // output = active
+        auto* ch = reinterpret_cast<uint8_t*>(state);
+        ch[2] = 2; // channel = 2
+        auto* vol = reinterpret_cast<int16_t*>(ch + 8);
+        vol[0] = 32767;
+        vol[1] = 32767;
+    }
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceAudioOutSetMixLevelPadSpk(int32_t handle, int32_t mixLevel) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceAudioOutSetMixLevelPadSpk\n"); }
     (void)handle; (void)mixLevel;
     return 0;
 }
@@ -1436,8 +1552,8 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("eV9wAD2riIA", "libkernel", "sceKernelStat", reinterpret_cast<uintptr_t>(&libc::hle_sceKernelStat));
     register_adapter("j2AIqSqJP0w", "libkernel", "sceKernelGetdents", reinterpret_cast<uintptr_t>(&libc::hle_sceKernelGetdents));
     register_adapter("3kg7rT0NQIs", "libkernel", "scePthreadExit", reinterpret_cast<uintptr_t>(&libc::hle_scePthreadExit));
-    register_adapter("fMP5NHUOaMk", "libkernel", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&libc::hle_sceSysmoduleIsLoaded));
-    register_adapter("fMP5NHUOaMk", "libSceSysmodule", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&libc::hle_sceSysmoduleIsLoaded));
+    register_adapter("fMP5NHUOaMk", "libkernel", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&hle_sceSysmoduleIsLoaded));
+    register_adapter("fMP5NHUOaMk", "libSceSysmodule", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&hle_sceSysmoduleIsLoaded));
     register_adapter("lLMT9vJAck0", "libScePosix", "clock_gettime", reinterpret_cast<uintptr_t>(&libc::hle_clock_gettime));
     register_adapter("NN01qLRhiqU", "libScePosix", "rename", reinterpret_cast<uintptr_t>(&libc::hle_rename));
     register_adapter("wtkt-teR1so", "libScePosix", "pthread_attr_init", reinterpret_cast<uintptr_t>(&pthread::attr_init));
