@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 #include <cstdint>
 #include <array>
+#include "hle/gnm/command_queue.h"
 
 namespace gravity::hle::gnm {
 
@@ -82,8 +83,90 @@ namespace gravity::hle::gnm {
 
     // Internal methods (not exposed as HLE)
     void setDevice(VkDevice device);
-    void recordFrame(VkCommandBuffer cmd, VkImageView imageView,
-                     VkExtent2D extent);
+    pm4::Diagnostic recordFrame(VkCommandBuffer cmd, VkImageView imageView,
+                               VkExtent2D extent, RecordingTicket& ticket);
+
+    extern "C" GRAVITY_SYSV_ABI int32_t sceGnmSubmitCommandBuffers(
+        uint32_t count, const uint32_t* const* dcb_addresses, const uint32_t* dcb_sizes,
+        const uint32_t* const* ccb_addresses, const uint32_t* ccb_sizes);
+
+    extern "C" GRAVITY_SYSV_ABI uint32_t
+        sceGnmDrawInitDefaultHardwareState200(uint32_t* cmdbuf, uint32_t size);
+    extern "C" GRAVITY_SYSV_ABI uint32_t
+        sceGnmDispatchInitDefaultHardwareState(uint32_t* cmdbuf, uint32_t size);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmAreSubmitsAllowed();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceRazorIsLoaded();
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmFlushGarlic();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertWaitFlipDone(uint32_t* cmdbuf, uint32_t size, int32_t vo_handle, uint32_t buf_idx);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertPushMarker(uint32_t* cmdbuf, uint32_t size, const char* marker);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertPopMarker(uint32_t* cmdbuf, uint32_t size);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertSetMarker(uint32_t* cmdbuf, uint32_t size, const char* marker);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertPushColorMarker(uint32_t* cmdbuf, uint32_t size, const char* marker, uint32_t color);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmInsertSetColorMarker(uint32_t* cmdbuf, uint32_t size, const char* marker, uint32_t color);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetPsShader(uint32_t* cmdbuf, uint32_t size, const void* ps_shader);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmUpdatePsShader(uint32_t* cmdbuf, uint32_t size, const void* ps_shader);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetVsShader(uint32_t* cmdbuf, uint32_t size, const void* vs_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmUpdateVsShader(uint32_t* cmdbuf, uint32_t size, const void* vs_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetEsShader(uint32_t* cmdbuf, uint32_t size, const void* es_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetHsShader(uint32_t* cmdbuf, uint32_t size, const void* hs_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmUpdateHsShader(uint32_t* cmdbuf, uint32_t size, const void* hs_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetLsShader(uint32_t* cmdbuf, uint32_t size, const void* ls_shader, uint32_t shader_modifier);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetCsShader(uint32_t* cmdbuf, uint32_t size, const void* cs_shader);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetGsShader(uint32_t* cmdbuf, uint32_t size, const void* gs_shader);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmUpdateGsShader(uint32_t* cmdbuf, uint32_t size, const void* gs_shader);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSubmitAndFlipCommandBuffers(
+            uint32_t count, const uint32_t* const* dcb_addresses, const uint32_t* dcb_sizes,
+            const uint32_t* const* ccb_addresses, const uint32_t* ccb_sizes,
+            uint32_t video_out_handle, uint32_t display_buffer_index, uint32_t flip_mode, int64_t flip_arg);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSubmitDone();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmIsUserPaEnabled();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmDriverCaptureInProgress();
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmDriverTriggerCapture();
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmDebugHardwareStatus(void* status, uint32_t size);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmValidateCommandBuffers(
+            uint32_t count, const uint32_t* const* dcb_addresses, const uint32_t* dcb_sizes,
+            const uint32_t* const* ccb_addresses, const uint32_t* ccb_sizes);
+    extern "C" GRAVITY_SYSV_ABI uint64_t
+        sceGnmGetTheTessellationFactorRingBufferBaseAddress();
+    extern "C" GRAVITY_SYSV_ABI uint32_t
+        sceGnmLogicalCuIndexToPhysicalCuIndex(uint32_t logical_cu_index);
+    extern "C" GRAVITY_SYSV_ABI uint32_t
+        sceGnmLogicalCuMaskToPhysicalCuMask(uint32_t logical_cu_mask);
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmDingDong(uint32_t queue_id, uint32_t ring_offset);
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmDisableMipStatsReport();
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmRequestMipStatsReportAndReset();
+    extern "C" GRAVITY_SYSV_ABI void
+        sceGnmSetupMipStatsReport();
 
     // Diagnostics / Query
     bool gnm_is_initialized() noexcept;

@@ -425,7 +425,24 @@ private:
         vkCmdPipelineBarrier2(cmd, &dep_info);
 
         // Render frame with GNM translator
-        gnm::recordFrame(cmd, swapchain_image_views_[image_index], swapchain_extent_);
+        gnm::RecordingTicket ticket;
+        struct AbortRecording {
+            gnm::RecordingTicket& ticket;
+            ~AbortRecording() { gnm::command_queue().abort(ticket); }
+        } abort_recording{ticket};
+        const auto recorded = gnm::recordFrame(cmd, swapchain_image_views_[image_index], swapchain_extent_, ticket);
+        if (!recorded) {
+            static std::atomic<unsigned> rejected_count{};
+            if (rejected_count.fetch_add(1) < 3) {
+                std::cerr << "PM4/Vulkan recording notice at DWORD " << recorded.word_offset
+                          << ", opcode " << recorded.opcode << ": " << recorded.message
+                          << " (presenting clear frame while shader translation is pending)\n";
+            }
+            if (recorded.error != gnm::pm4::Error::resources) {
+                render_failed_ = true;
+                return;
+            }
+        }
 
         // Transition to PRESENT_SRC_KHR
         barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -450,6 +467,9 @@ private:
 
         if (vkQueueSubmit(graphics_queue_, 1, &submit_info, in_flight_fences_[current_frame_]) != VK_SUCCESS) { render_failed_ = true; return; }
 
+        if (ticket.id && !gnm::command_queue().acknowledge(ticket)) {
+            render_failed_ = true; return;
+        }
         // Present
         VkPresentInfoKHR present_info{};
         present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;

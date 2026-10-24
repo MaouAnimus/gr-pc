@@ -1,5 +1,6 @@
 #include "hle/gnm.h"
 #include "hle/kernel.h"
+#include "hle/guest_memory.h"
 #include <vulkan/vulkan.h>
 #include <array>
 #include <vector>
@@ -32,14 +33,13 @@ struct VertexBufferSlot {
 class GnmRenderer {
 public:
     GnmRenderer() = default;
-    ~GnmRenderer() {
-        shutdown();
-    }
+    ~GnmRenderer() = default;
 
     hle::Status initialize() {
         std::lock_guard<hle::Mutex> lock(mutex_);
         if (initialized_) return {hle::Error::invalid_state};
 
+        command_queue().reset();
         initialized_ = true;
         clear_color_[0] = 0.05f; // Kat's dark cel-shaded comic blue
         clear_color_[1] = 0.05f;
@@ -60,12 +60,14 @@ public:
 
     void shutdown() {
         std::lock_guard<hle::Mutex> lock(mutex_);
+        command_queue().reset();
         initialized_ = false;
         device_ = VK_NULL_HANDLE;
     }
 
     void setDevice(VkDevice dev) {
         std::lock_guard<hle::Mutex> lock(mutex_);
+        if (dev != device_) command_queue().reset();
         device_ = dev;
     }
 
@@ -120,6 +122,16 @@ public:
         std::lock_guard<hle::Mutex> lock(mutex_);
         vs_addr_ = vs_addr;
         ps_addr_ = ps_addr;
+    }
+
+    void setPsShader(uint64_t ps_addr) {
+        std::lock_guard<hle::Mutex> lock(mutex_);
+        ps_addr_ = ps_addr;
+    }
+
+    void setVsShader(uint64_t vs_addr) {
+        std::lock_guard<hle::Mutex> lock(mutex_);
+        vs_addr_ = vs_addr;
     }
 
     void setViewport(float x, float y, float width, float height, float minDepth, float maxDepth) {
@@ -187,9 +199,11 @@ public:
         // Commands committed to queue
     }
 
-    void recordFrame(VkCommandBuffer cmd, VkImageView targetView, VkExtent2D extent) {
+    pm4::Diagnostic recordFrame(VkCommandBuffer cmd, VkImageView targetView, VkExtent2D extent, RecordingTicket& ticket) {
         std::lock_guard<hle::Mutex> lock(mutex_);
-        if (cmd == VK_NULL_HANDLE || targetView == VK_NULL_HANDLE) return;
+        ticket = {};
+        if (cmd == VK_NULL_HANDLE || targetView == VK_NULL_HANDLE || !extent.width || !extent.height)
+            return {pm4::Error::state,0,0,0,"Missing Vulkan render target/command buffer"};
 
         // Dynamic rendering attachment info
         VkRenderingAttachmentInfo color_attachment{};
@@ -214,34 +228,17 @@ public:
 
         vkCmdBeginRendering(cmd, &rendering_info);
 
-        // Dynamic viewport & scissor
-        VkViewport vp{};
-        vp.x = 0.0f;
-        vp.y = 0.0f;
-        vp.width = static_cast<float>(extent.width);
-        vp.height = static_cast<float>(extent.height);
-        vp.minDepth = 0.0f;
-        vp.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &vp);
-
-        VkRect2D sc{};
-        sc.offset = {0, 0};
-        sc.extent = extent;
-        vkCmdSetScissor(cmd, 0, 1, &sc);
-
-        // Apply Cel-Shading Inverted Hull DepthBias dynamic state
-        if (depth_bias_enabled_) {
-            vkCmdSetDepthBias(cmd, depth_bias_constant_, depth_bias_clamp_, depth_bias_slope_);
-        }
+        const auto result = command_queue().record(cmd, extent, ticket);
 
         vkCmdEndRendering(cmd);
+        return result;
     }
 
-    [[nodiscard]] bool isInitialized() const noexcept { return initialized_; }
-    [[nodiscard]] uint64_t totalDrawCalls() const noexcept { return total_draw_calls_; }
+    [[nodiscard]] bool isInitialized() const noexcept { std::lock_guard<hle::Mutex> lock(mutex_); return initialized_; }
+    [[nodiscard]] uint64_t totalDrawCalls() const noexcept { std::lock_guard<hle::Mutex> lock(mutex_); return total_draw_calls_; }
 
 private:
-    hle::Mutex mutex_{};
+    mutable hle::Mutex mutex_{};
     bool initialized_{false};
     VkDevice device_{VK_NULL_HANDLE};
 
@@ -298,8 +295,8 @@ void setDevice(VkDevice device) {
     g_gnmRenderer.setDevice(device);
 }
 
-void recordFrame(VkCommandBuffer cmd, VkImageView imageView, VkExtent2D extent) {
-    g_gnmRenderer.recordFrame(cmd, imageView, extent);
+pm4::Diagnostic recordFrame(VkCommandBuffer cmd, VkImageView imageView, VkExtent2D extent, RecordingTicket& ticket) {
+    return g_gnmRenderer.recordFrame(cmd, imageView, extent, ticket);
 }
 
 bool gnm_is_initialized() noexcept {
@@ -381,6 +378,309 @@ GRAVITY_SYSV_ABI void sceGnmDrawPrimitive(uint32_t primitiveType, uint32_t verte
 
 GRAVITY_SYSV_ABI void sceGnmCommitCommands() {
     g_gnmRenderer.commitCommands();
+}
+
+GRAVITY_SYSV_ABI uint32_t sceGnmDrawInitDefaultHardwareState200(uint32_t* cmdbuf, uint32_t size) {
+    if (!cmdbuf || size < 256 || !gravity::hle::guest_memory::accessible(cmdbuf, 256 * sizeof(uint32_t), true)) {
+        return 0;
+    }
+
+    static constexpr std::uint32_t kClearStateSequence[] = {
+        0xc0012800u, 0x80000000u, 0x80000000u, // CONTEXT_CONTROL
+        0xc0001200u, 0u,                        // CLEAR_STATE
+        0xc0055800u, 0x2ec47fc0u, 0xffffffffu, 0u, 0u, 0u, 10u, // ACQUIRE_MEM
+    };
+    static constexpr std::size_t kClearStateSize = sizeof(kClearStateSequence) / sizeof(uint32_t); // 12
+
+    static constexpr std::uint32_t kInitSequence200[] = {
+        0xc0017600u, 0x216u, 0xffffffffu,
+        0xc0017600u, 0x217u, 0xffffffffu,
+        0xc0017600u, 0x215u, 0u,
+        0xc0016900u, 0x2f9u, 0x2du,
+        0xc0016900u, 0x282u, 8u,
+        0xc0016900u, 0x280u, 0x80008u,
+        0xc0016900u, 0x281u, 0xffff0000u,
+        0xc0016900u, 0x204u, 0u,
+        0xc0016900u, 0x206u, 0x43fu,
+        0xc0016900u, 0x83u,  0xffffu,
+        0xc0016900u, 0x317u, 0x10u,
+        0xc0016900u, 0x2fau, 0x3f800000u,
+        0xc0016900u, 0x2fcu, 0x3f800000u,
+        0xc0016900u, 0x2fbu, 0x3f800000u,
+        0xc0016900u, 0x2fdu, 0x3f800000u,
+        0xc0016900u, 0x202u, 0xcc0010u,
+        0xc0016900u, 0x30eu, 0xffffffffu,
+        0xc0016900u, 0x30fu, 0xffffffffu,
+        0xc0002f00u, 1u,
+        0xc0017600u, 7u,     0x1701ffu,
+        0xc0017600u, 0x46u,  0x1701fdu,
+        0xc0017600u, 0x87u,  0x1701ffu,
+        0xc0017600u, 0xc7u,  0x1701fdu,
+        0xc0017600u, 0x107u, 0x17u,
+        0xc0017600u, 0x147u, 0x1701fdu,
+        0xc0017600u, 0x47u,  0x1cu,
+        0xc0016900u, 0x1b1u, 2u,
+        0xc0016900u, 0x101u, 0u,
+        0xc0016900u, 0x100u, 0xffffffffu,
+        0xc0016900u, 0x103u, 0u,
+        0xc0016900u, 0x284u, 0u,
+        0xc0016900u, 0x290u, 0u,
+        0xc0016900u, 0x2aeu, 0u,
+        0xc0016900u, 0x292u, 0u,
+        0xc0016900u, 0x293u, 0x6020000u,
+        0xc0016900u, 0x2f8u, 0u,
+        0xc0016900u, 0x2deu, 0x1e9u,
+        0xc0036900u, 0x295u, 0x100u, 0x100u, 4u,
+        0xc0017900u, 0x200u, 0xe0000000u,
+    };
+    static constexpr std::size_t kInitSequence200Size = sizeof(kInitSequence200) / sizeof(uint32_t); // 118
+
+    std::memcpy(cmdbuf, kClearStateSequence, sizeof(kClearStateSequence));
+    std::memcpy(cmdbuf + kClearStateSize, kInitSequence200, sizeof(kInitSequence200));
+
+    constexpr std::size_t written_so_far = kClearStateSize + kInitSequence200Size; // 130
+    constexpr std::size_t remaining = 256 - written_so_far; // 126
+    constexpr std::size_t nop_payload_size = remaining - 1; // 125
+
+    cmdbuf[written_so_far] = 0xC0000000u | (static_cast<uint32_t>(nop_payload_size - 1) << 16) | 0x1000u;
+    std::memset(cmdbuf + written_so_far + 1, 0, nop_payload_size * sizeof(uint32_t));
+
+    return 256;
+}
+
+GRAVITY_SYSV_ABI uint32_t sceGnmDispatchInitDefaultHardwareState(uint32_t* cmdbuf, uint32_t size) {
+    if (!cmdbuf || size < 256 || !gravity::hle::guest_memory::accessible(cmdbuf, 256 * sizeof(uint32_t), true)) {
+        return 0;
+    }
+
+    static constexpr std::uint32_t kDispatchInitSequence[] = {
+        0xc0016900u, 0x216u, 0xffffffffu, // SetShReg 0x216
+        0xc0016900u, 0x217u, 0xffffffffu, // SetShReg 0x217
+        0xc0016900u, 0x215u, 0x170u,        // SetShReg 0x215
+        0xc0055800u, 0x28000000u, 0u, 0u, 0u, 0u, 0xau, // AcquireMem (6 payload words)
+    };
+    static constexpr std::size_t kDispatchSeqSize = sizeof(kDispatchInitSequence) / sizeof(uint32_t);
+
+    std::memcpy(cmdbuf, kDispatchInitSequence, sizeof(kDispatchInitSequence));
+
+    constexpr std::size_t written_so_far = kDispatchSeqSize;
+    constexpr std::size_t remaining = 256 - written_so_far;
+    constexpr std::size_t nop_payload_size = remaining - 1;
+
+    cmdbuf[written_so_far] = 0xC0000000u | (static_cast<uint32_t>(nop_payload_size - 1) << 16) | 0x1000u;
+    std::memset(cmdbuf + written_so_far + 1, 0, nop_payload_size * sizeof(uint32_t));
+
+    return 256;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmAreSubmitsAllowed() {
+    return 1;
+}
+
+GRAVITY_SYSV_ABI int32_t sceRazorIsLoaded() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI void sceGnmFlushGarlic() {
+    // Memory cache flush is not required on unified host memory architecture
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertWaitFlipDone(uint32_t* cmdbuf, uint32_t size, int32_t vo_handle, uint32_t buf_idx) {
+    (void)vo_handle;
+    if (!cmdbuf || size != 7 || !gravity::hle::guest_memory::accessible(cmdbuf, 7 * sizeof(uint32_t), true)) {
+        return -1;
+    }
+
+    static uint64_t s_flip_label = 0;
+    const uintptr_t label_addr = reinterpret_cast<uintptr_t>(&s_flip_label);
+    const uintptr_t poll_addr = (label_addr + buf_idx * sizeof(uintptr_t)) & ~0x3ull;
+
+    cmdbuf[0] = 0xc0053c00u; // PM4 Type 3 header: WaitRegMem, 5 body dwords
+    cmdbuf[1] = 0x13u;        // Equal (3) | Memory (0x10)
+    cmdbuf[2] = static_cast<uint32_t>(poll_addr & 0xFFFFFFFFu);
+    cmdbuf[3] = static_cast<uint32_t>((poll_addr >> 32) & 0xFFFFFFFFu);
+    cmdbuf[4] = 0u;           // ref = 0 (matches s_flip_label)
+    cmdbuf[5] = 0xFFFFFFFFu;  // mask
+    cmdbuf[6] = 10u;          // poll_interval
+
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertPushMarker(uint32_t* cmdbuf, uint32_t size, const char* marker) {
+    (void)marker;
+    if (!cmdbuf || size < 2 || !gravity::hle::guest_memory::accessible(cmdbuf, size * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(size - 2) << 16);
+    cmdbuf[1] = 0x1u;
+    std::memset(cmdbuf + 2, 0, (size - 2) * sizeof(uint32_t));
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertPopMarker(uint32_t* cmdbuf, uint32_t size) {
+    if (!cmdbuf || size < 2 || !gravity::hle::guest_memory::accessible(cmdbuf, size * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(size - 2) << 16);
+    cmdbuf[1] = 0x2u;
+    std::memset(cmdbuf + 2, 0, (size - 2) * sizeof(uint32_t));
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertSetMarker(uint32_t* cmdbuf, uint32_t size, const char* marker) {
+    (void)marker;
+    if (!cmdbuf || size < 2 || !gravity::hle::guest_memory::accessible(cmdbuf, size * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(size - 2) << 16);
+    cmdbuf[1] = 0x3u;
+    std::memset(cmdbuf + 2, 0, (size - 2) * sizeof(uint32_t));
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertPushColorMarker(uint32_t* cmdbuf, uint32_t size, const char* marker, uint32_t color) {
+    (void)marker; (void)color;
+    if (!cmdbuf || size < 2 || !gravity::hle::guest_memory::accessible(cmdbuf, size * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(size - 2) << 16);
+    cmdbuf[1] = 0x4u;
+    std::memset(cmdbuf + 2, 0, (size - 2) * sizeof(uint32_t));
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmInsertSetColorMarker(uint32_t* cmdbuf, uint32_t size, const char* marker, uint32_t color) {
+    (void)marker; (void)color;
+    if (!cmdbuf || size < 2 || !gravity::hle::guest_memory::accessible(cmdbuf, size * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(size - 2) << 16);
+    cmdbuf[1] = 0x5u;
+    std::memset(cmdbuf + 2, 0, (size - 2) * sizeof(uint32_t));
+    return 0;
+}
+
+static int32_t write_shader_packet(uint32_t* cmdbuf, uint32_t size, uint32_t required_dwords,
+                                  uint32_t stage_tag, const void* shader, uint32_t modifier) {
+    (void)modifier;
+    if (!cmdbuf || size < required_dwords ||
+        !gravity::hle::guest_memory::accessible(cmdbuf, required_dwords * sizeof(uint32_t), true)) {
+        return -1;
+    }
+    cmdbuf[0] = 0xC0001000u | (static_cast<uint32_t>(required_dwords - 2) << 16);
+    cmdbuf[1] = stage_tag;
+    const uint32_t payload_words = required_dwords - 2;
+    if (shader && gravity::hle::guest_memory::accessible(shader, payload_words * sizeof(uint32_t), false)) {
+        std::memcpy(cmdbuf + 2, shader, payload_words * sizeof(uint32_t));
+    } else {
+        std::memset(cmdbuf + 2, 0, payload_words * sizeof(uint32_t));
+    }
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetPsShader(uint32_t* cmdbuf, uint32_t size, const void* ps_shader) {
+    if (ps_shader) {
+        g_gnmRenderer.setPsShader(reinterpret_cast<uint64_t>(ps_shader));
+    }
+    return write_shader_packet(cmdbuf, size, 40, 0x5053u, ps_shader, 0);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmUpdatePsShader(uint32_t* cmdbuf, uint32_t size, const void* ps_shader) {
+    if (ps_shader) {
+        g_gnmRenderer.setPsShader(reinterpret_cast<uint64_t>(ps_shader));
+    }
+    return write_shader_packet(cmdbuf, size, 40, 0x5053u, ps_shader, 0);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetVsShader(uint32_t* cmdbuf, uint32_t size, const void* vs_shader, uint32_t shader_modifier) {
+    if (vs_shader) {
+        g_gnmRenderer.setVsShader(reinterpret_cast<uint64_t>(vs_shader));
+    }
+    return write_shader_packet(cmdbuf, size, 29, 0x5653u, vs_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmUpdateVsShader(uint32_t* cmdbuf, uint32_t size, const void* vs_shader, uint32_t shader_modifier) {
+    if (vs_shader) {
+        g_gnmRenderer.setVsShader(reinterpret_cast<uint64_t>(vs_shader));
+    }
+    return write_shader_packet(cmdbuf, size, 29, 0x5653u, vs_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetEsShader(uint32_t* cmdbuf, uint32_t size, const void* es_shader, uint32_t shader_modifier) {
+    return write_shader_packet(cmdbuf, size, 20, 0x4553u, es_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetHsShader(uint32_t* cmdbuf, uint32_t size, const void* hs_shader, uint32_t shader_modifier) {
+    return write_shader_packet(cmdbuf, size, 30, 0x4853u, hs_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmUpdateHsShader(uint32_t* cmdbuf, uint32_t size, const void* hs_shader, uint32_t shader_modifier) {
+    return write_shader_packet(cmdbuf, size, 30, 0x4853u, hs_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetLsShader(uint32_t* cmdbuf, uint32_t size, const void* ls_shader, uint32_t shader_modifier) {
+    return write_shader_packet(cmdbuf, size, 23, 0x4C53u, ls_shader, shader_modifier);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetCsShader(uint32_t* cmdbuf, uint32_t size, const void* cs_shader) {
+    return write_shader_packet(cmdbuf, size, 25, 0x4353u, cs_shader, 0);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetGsShader(uint32_t* cmdbuf, uint32_t size, const void* gs_shader) {
+    return write_shader_packet(cmdbuf, size, 29, 0x4753u, gs_shader, 0);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmUpdateGsShader(uint32_t* cmdbuf, uint32_t size, const void* gs_shader) {
+    return write_shader_packet(cmdbuf, size, 29, 0x4753u, gs_shader, 0);
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmIsUserPaEnabled() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmDriverCaptureInProgress() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI void sceGnmDriverTriggerCapture() {
+}
+
+GRAVITY_SYSV_ABI void sceGnmDebugHardwareStatus(void* status, uint32_t size) {
+    if (status && size && gravity::hle::guest_memory::accessible(status, size, true)) {
+        std::memset(status, 0, size);
+    }
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmValidateCommandBuffers(
+    uint32_t count, const uint32_t* const* dcb_addresses, const uint32_t* dcb_sizes,
+    const uint32_t* const* ccb_addresses, const uint32_t* ccb_sizes) {
+    (void)count; (void)dcb_addresses; (void)dcb_sizes; (void)ccb_addresses; (void)ccb_sizes;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI uint64_t sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI uint32_t sceGnmLogicalCuIndexToPhysicalCuIndex(uint32_t logical_cu_index) {
+    return logical_cu_index;
+}
+
+GRAVITY_SYSV_ABI uint32_t sceGnmLogicalCuMaskToPhysicalCuMask(uint32_t logical_cu_mask) {
+    return logical_cu_mask;
+}
+
+GRAVITY_SYSV_ABI void sceGnmDingDong(uint32_t queue_id, uint32_t ring_offset) {
+    (void)queue_id; (void)ring_offset;
+}
+
+GRAVITY_SYSV_ABI void sceGnmDisableMipStatsReport() {
+}
+
+GRAVITY_SYSV_ABI void sceGnmRequestMipStatsReportAndReset() {
+}
+
+GRAVITY_SYSV_ABI void sceGnmSetupMipStatsReport() {
 }
 
 } // extern "C"
