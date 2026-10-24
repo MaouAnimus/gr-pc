@@ -72,6 +72,32 @@ int main(int argc, char* argv[]) {
         CHECK(search_res.hitNum >= 1);
         CHECK(std::strcmp(out_dirs[0].data, "SLOT00") == 0);
 
+        // Test param setting
+        const char save_title[] = "Episode 1: Awakening";
+        CHECK(sceSaveDataSetParam(&mount_res, 0, save_title, sizeof(save_title)) == 0);
+
+        // Test icon saving
+        const uint8_t fake_png[] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+        SceSaveDataIcon icon{};
+        icon.buf = fake_png;
+        icon.dataSize = sizeof(fake_png);
+        CHECK(sceSaveDataSaveIcon(&mount_res, &icon) == 0);
+        CHECK(std::filesystem::exists("test_savedata/SLOT00/sce_sys/icon0.png"));
+        CHECK(std::filesystem::exists("test_savedata/SLOT00/sce_sys/param.txt"));
+
+        // Test memory save buffers
+        CHECK(sceSaveDataSetupSaveDataMemory(1024) == 0);
+        SceSaveDataMemory mem{};
+        CHECK(sceSaveDataGetSaveDataMemory(&mem) == 0);
+        CHECK(mem.buf != nullptr && mem.bufSize == 1024);
+        char mem_data[] = "MEMORY_BLOCK_DATA";
+        SceSaveDataMemory set_mem{};
+        set_mem.buf = mem_data;
+        set_mem.bufSize = sizeof(mem_data);
+        CHECK(sceSaveDataSetSaveDataMemory(&set_mem) == 0);
+        CHECK(sceSaveDataGetSaveDataMemory(&mem) == 0);
+        CHECK(mem.bufSize == sizeof(mem_data));
+
         // Test umount
         CHECK(sceSaveDataUmount(&mount_res) == 0);
         CHECK(!is_savedata_mounted());

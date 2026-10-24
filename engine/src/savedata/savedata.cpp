@@ -18,6 +18,18 @@ namespace {
 [[maybe_unused]] constexpr std::int32_t SCE_SAVE_DATA_ERROR_PARAMETER = -2140667901;
 [[maybe_unused]] constexpr std::int32_t SCE_SAVE_DATA_ERROR_NOT_MOUNTED = -2140667899;
 
+std::filesystem::path get_default_savedata_root() {
+    const char* env_root = std::getenv("GRAVITY_SAVEDATA");
+    if (env_root && *env_root) {
+        return std::filesystem::path(env_root);
+    }
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata && *appdata) {
+        return std::filesystem::path(appdata) / "GravityRush" / "SaveData" / "CUSA01130";
+    }
+    return std::filesystem::path("savedata/CUSA01130");
+}
+
 struct SaveDataState {
     std::mutex mutex;
     bool user_service_initialized{false};
@@ -25,7 +37,7 @@ struct SaveDataState {
     bool dialog_initialized{false};
     bool is_mounted{false};
     std::string mount_dir_name{};
-    std::filesystem::path host_save_root{"savedata/CUSA01130"};
+    std::filesystem::path host_save_root{get_default_savedata_root()};
     std::vector<std::uint8_t> memory_save_buffer{};
 };
 
@@ -183,6 +195,7 @@ GRAVITY_SYSV_ABI std::int32_t sceSaveDataMount(const SceSaveDataMount* mount, Sc
     std::filesystem::path host_dir = state().host_save_root / dir_name;
     std::error_code ec;
     std::filesystem::create_directories(host_dir, ec);
+    std::filesystem::create_directories(host_dir / "sce_sys", ec);
 
     // Register mount point in VFS
     fs::vfs_mount_path("/savedata0", host_dir);
@@ -227,7 +240,26 @@ GRAVITY_SYSV_ABI std::int32_t sceSaveDataDelete(const SceSaveDataDelete* del) {
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceSaveDataSetParam(const SceSaveDataMountResult* mountResult, std::uint32_t paramType, const void* param, std::size_t paramSize) {
-    (void)mountResult; (void)paramType; (void)param; (void)paramSize;
+    (void)mountResult;
+    if (!param || paramSize == 0 || !guest_memory::accessible(param, paramSize)) {
+        return SCE_OK;
+    }
+    std::lock_guard<std::mutex> lock(state().mutex);
+    if (state().is_mounted && !state().mount_dir_name.empty()) {
+        std::filesystem::path sys_dir = state().host_save_root / state().mount_dir_name / "sce_sys";
+        std::error_code ec;
+        std::filesystem::create_directories(sys_dir, ec);
+        std::ofstream out(sys_dir / "param.txt", std::ios::app);
+        if (out) {
+            out << "Type=" << paramType << " Size=" << paramSize << " Data=";
+            const char* str = reinterpret_cast<const char*>(param);
+            for (std::size_t i = 0; i < (std::min)(paramSize, std::size_t{128}); ++i) {
+                if (str[i] >= 32 && str[i] <= 126) out << str[i];
+                else if (str[i] == 0) break;
+            }
+            out << "\n";
+        }
+    }
     return SCE_OK;
 }
 
@@ -238,10 +270,17 @@ GRAVITY_SYSV_ABI std::int32_t sceSaveDataSaveIcon(const SceSaveDataMountResult* 
     (void)mountResult;
     std::lock_guard<std::mutex> lock(state().mutex);
     if (state().is_mounted && !state().mount_dir_name.empty()) {
-        std::filesystem::path icon_path = state().host_save_root / state().mount_dir_name / "icon0.png";
-        std::ofstream out(icon_path, std::ios::binary);
+        std::filesystem::path dir = state().host_save_root / state().mount_dir_name;
+        std::filesystem::path sys_dir = dir / "sce_sys";
+        std::error_code ec;
+        std::filesystem::create_directories(sys_dir, ec);
+        std::ofstream out(sys_dir / "icon0.png", std::ios::binary);
         if (out) {
             out.write(reinterpret_cast<const char*>(icon->buf), icon->dataSize);
+        }
+        std::ofstream out2(dir / "icon0.png", std::ios::binary);
+        if (out2) {
+            out2.write(reinterpret_cast<const char*>(icon->buf), icon->dataSize);
         }
     }
     return SCE_OK;
