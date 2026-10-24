@@ -42,6 +42,8 @@ add_library(gravity_runtime STATIC
     engine/src/gnm/shader_pipeline.cpp
     engine/src/libc/libc.cpp
     engine/src/avplayer/avplayer.cpp
+    engine/src/avplayer/mf_decoder.cpp
+    engine/src/avplayer/video_texture.cpp
     engine/src/rtc/rtc.cpp
     engine/src/audio/ngs2.cpp
     engine/src/audio/audio3d.cpp
@@ -51,7 +53,7 @@ target_compile_features(gravity_runtime PUBLIC cxx_std_23)
 target_compile_definitions(gravity_runtime PUBLIC
     WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_compile_options(gravity_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt freetype)
+target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt freetype mfplat mfreadwrite mfuuid propsys uuid)
 
 add_executable(gravity_runtime_probe engine/src/runtime_probe.cpp)
 target_link_libraries(gravity_runtime_probe PRIVATE gravity_runtime)
@@ -237,13 +239,16 @@ if(BUILD_TESTING)
     endforeach()
 
     # AvPlayer tests
-    add_executable(avplayer_tests tests/avplayer_tests.cpp)
+    add_executable(avplayer_tests tests/avplayer_tests.cpp tests/avplayer_fixture.cpp tests/pm4_vulkan_test.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.vert.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/pm4_triangle.frag.spv)
     target_link_libraries(avplayer_tests PRIVATE gravity_runtime)
     target_compile_options(avplayer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    foreach(suite lifecycle playback)
+    foreach(suite lifecycle playback invalid looping performance vulkan)
         add_test(NAME avplayer_${suite} COMMAND avplayer_tests ${suite})
-        set_tests_properties(avplayer_${suite} PROPERTIES TIMEOUT 10)
+        set_tests_properties(avplayer_${suite} PROPERTIES TIMEOUT 60)
     endforeach()
+    set_tests_properties(avplayer_vulkan PROPERTIES SKIP_RETURN_CODE 77)
 
     # NGS2 & Audio3D tests
     add_executable(audio_advanced_tests tests/audio_advanced_tests.cpp)

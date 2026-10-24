@@ -1,4 +1,6 @@
 #include "hle/gnm.h"
+#include "hle/gnm/shader_pipeline.h"
+#include "hle/avplayer/avplayer.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -6,6 +8,9 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <functional>
+#include <chrono>
+#include <thread>
 using namespace gravity::hle::gnm;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"Vulkan line %d: %s\n",__LINE__,#x); std::exit(1); } } while(false)
 namespace {
@@ -173,7 +178,7 @@ struct VulkanTest {
         }
         return result;
     }
-    void begin(bool rendering=true) {
+    void begin(bool rendering=true, const std::function<void()>& before_render={}) {
         CHECK(vkResetCommandBuffer(cmd,0)==VK_SUCCESS);
         VkCommandBufferBeginInfo start{};start.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         CHECK(vkBeginCommandBuffer(cmd,&start)==VK_SUCCESS);
@@ -183,6 +188,7 @@ struct VulkanTest {
         barrier.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
         barrier.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+        if(before_render) before_render();
         if(rendering) {
             VkRenderingAttachmentInfo attachment{};attachment.sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             attachment.imageView=view;attachment.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -322,5 +328,61 @@ void vulkan_test() {
     CHECK(command_queue().stats().submitted_draws==1);
     sceGnmShutdown();
     std::puts("PM4 Vulkan: auto/indexed16/indexed32/offset draws, readback, transactional retry and GNM ABI integration passed");
+}
+
+void avplayer_vulkan_test(gravity::hle::avplayer::SceAvPlayerHandle handle) {
+    using namespace gravity::hle::avplayer;
+    VulkanTest vk;
+    if(!vk.initialize()) { std::puts("SKIP: Vulkan 1.3 unavailable"); std::exit(77); }
+    auto& pipeline = VulkanShaderPipeline::instance();
+    CHECK(pipeline.initialize(vk.device, vk.physical, VK_FORMAT_R8G8B8A8_UNORM));
+    CommandQueue queue;
+    CHECK(queue.set_resolver(pipeline.get_resolver()));
+    std::uintptr_t stable_address{};
+    CHECK(sceAvPlayerStart(handle)==0);
+    const auto started = std::chrono::steady_clock::now();
+    for(unsigned i=0; i<120; ++i) {
+        SceAvPlayerFrameInfoEx frame{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for(;;) {
+            const auto result = sceAvPlayerGetVideoDataEx(handle, &frame);
+            if(!result) break;
+            CHECK(result == static_cast<std::int32_t>(0x80540002U));
+            CHECK(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const auto address = reinterpret_cast<std::uintptr_t>(frame.pData);
+        if(!i) stable_address = address;
+        CHECK(address == stable_address && address % 256 == 0);
+        Words words;
+        add(words, 0x76, {0x10, static_cast<std::uint32_t>(address >> 8),
+            static_cast<std::uint32_t>(address >> 40), (frame.width - 1) | ((frame.height - 1) << 14)});
+        add(words, 0x2D, {4, 2});
+        CHECK(enqueue(queue, words));
+        vk.begin(true, [&] { CHECK(pipeline.prepare_video_textures(vk.cmd, i % 3, 3)); });
+        RecordingTicket ticket;
+        CHECK(queue.record(vk.cmd, vk.extent, ticket));
+        vk.finish(); CHECK(queue.acknowledge(ticket));
+        void* mapped{};
+        CHECK(vkMapMemory(vk.device, vk.pixel_memory, 0, VK_WHOLE_SIZE, 0, &mapped)==VK_SUCCESS);
+        const auto* rgba = static_cast<const std::uint8_t*>(mapped);
+        const auto* expected = static_cast<const std::uint8_t*>(frame.pData);
+        for(const auto y : {16U,48U}) for(unsigned channel=0; channel<4; ++channel) {
+            const auto actual = rgba[(y*64+32)*4+channel];
+            const auto source = expected[((y*frame.height/64)*frame.width+frame.width/2)*4+channel];
+            CHECK(std::abs(int(actual)-int(source)) <= 2);
+        }
+        vkUnmapMemory(vk.device, vk.pixel_memory);
+    }
+    const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    // Retire closed-player descriptors only after the frame-slot fence.
+    CHECK(sceAvPlayerStop(handle)==0);
+    CHECK(sceAvPlayerAddSource(handle, "/avtest/fixture.mp4")==0);
+    vk.begin(true, [&] { CHECK(pipeline.prepare_video_textures(vk.cmd, 0, 3)); }); vk.finish();
+    pipeline.reset_video_textures();
+    pipeline.shutdown();
+    CHECK(vk.validation_errors==0);
+    std::printf("AvPlayer H.264 1080p60 -> dynamic Vulkan sampler: 120 alternating frames, 3 slots, RGBA readback passed; %.3f s, %.1f offscreen fps\n",
+        elapsed, 120 / elapsed);
 }
 

@@ -1,5 +1,6 @@
 #include "hle/gnm/shader_pipeline.h"
 #include "hle/guest_memory.h"
+#include "hle/avplayer/avplayer.h"
 #include <array>
 #include <vector>
 #include <cstring>
@@ -184,6 +185,15 @@ bool VulkanShaderPipeline::create_linear_texture(uint32_t width, uint32_t height
 VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format) {
     if (!guest_addr || !width || !height) return default_descriptor_set_;
 
+    if (video_slot_ < video_slots_.size()) {
+        const auto video = video_slots_[video_slot_].find(guest_addr);
+        if (video != video_slots_[video_slot_].end()) {
+            const auto& entry = video->second;
+            return entry.texture && entry.texture->width() == width && entry.texture->height() == height
+                ? entry.descriptor : default_descriptor_set_;
+        }
+    }
+
     auto it = texture_cache_.find(guest_addr);
     if (it != texture_cache_.end()) {
         return it->second.descriptor_set;
@@ -206,6 +216,51 @@ VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr,
     VkDescriptorSet ds = tex.descriptor_set;
     texture_cache_.emplace(guest_addr, std::move(tex));
     return ds;
+}
+
+bool VulkanShaderPipeline::prepare_video_textures(VkCommandBuffer command, std::uint32_t slot, std::uint32_t count) {
+    if (!command || !device_ || !count || slot >= count) return false;
+    if (video_slots_.empty()) video_slots_.resize(count);
+    if (video_slots_.size() != count) return false; // resize requires an idle device
+    video_slot_ = slot;
+    auto& entries = video_slots_[slot];
+    const auto frames = avplayer::video_texture_frames();
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (std::none_of(frames.begin(), frames.end(), [&](const auto& frame) { return frame.address == it->first; })) {
+            if (it->second.descriptor) vkFreeDescriptorSets(device_, desc_pool_, 1, &it->second.descriptor);
+            it = entries.erase(it);
+        } else ++it;
+    }
+    for (const auto& frame : frames) {
+        auto& entry = entries[frame.address];
+        if (!entry.texture || entry.texture->width() != frame.width || entry.texture->height() != frame.height) {
+            if (entry.descriptor) vkFreeDescriptorSets(device_, desc_pool_, 1, &entry.descriptor);
+            entry = {};
+            entry.texture = std::make_unique<avplayer::VideoTexture>();
+            if (!entry.texture->initialize(device_, physical_device_, frame.width, frame.height)) return false;
+            VkDescriptorSetAllocateInfo allocation{}; allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocation.descriptorPool = desc_pool_; allocation.descriptorSetCount = 1; allocation.pSetLayouts = &desc_layout_;
+            if (vkAllocateDescriptorSets(device_, &allocation, &entry.descriptor) != VK_SUCCESS) return false;
+            VkDescriptorImageInfo image{default_sampler_, entry.texture->view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet write{}; write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = entry.descriptor; write.dstBinding = 0; write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo = &image;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+        if (entry.generation != frame.generation) {
+            if (!frame.rgba || !entry.texture->upload(command, *frame.rgba)) return false;
+            entry.generation = frame.generation;
+        }
+    }
+    return true;
+}
+
+void VulkanShaderPipeline::reset_video_textures() {
+    for (auto& slot : video_slots_) for (auto& [address, entry] : slot) {
+        (void)address;
+        if (entry.descriptor && device_ && desc_pool_) vkFreeDescriptorSets(device_, desc_pool_, 1, &entry.descriptor);
+    }
+    video_slots_.clear(); video_slot_ = 0;
 }
 
 bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat colorFormat) {
@@ -257,6 +312,7 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
 
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     pool_ci.poolSizeCount = 1;
     pool_ci.pPoolSizes = &pool_size;
     pool_ci.maxSets = 128;
@@ -448,6 +504,7 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
 }
 
 void VulkanShaderPipeline::shutdown() {
+    reset_video_textures();
     if (device_ != VK_NULL_HANDLE) {
         for (auto& [addr, tex] : texture_cache_) {
             (void)addr;

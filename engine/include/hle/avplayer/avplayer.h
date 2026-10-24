@@ -2,6 +2,8 @@
 
 #include "hle/abi.h"
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace gravity::hle::avplayer {
 
@@ -39,6 +41,16 @@ struct SceAvPlayerFrameInfoEx {
     std::uint32_t pixelFormat;
     std::uint32_t aspectRatio;
 };
+
+// Host-side bridge. Immutable snapshots outlive decoder buffers and are uploaded
+// once per Vulkan frame slot, after that slot's submission fence has completed.
+struct VideoTextureFrame {
+    std::uintptr_t address{};
+    std::uint64_t generation{};
+    std::uint32_t width{}, height{};
+    std::shared_ptr<const std::vector<std::uint8_t>> rgba;
+};
+std::vector<VideoTextureFrame> video_texture_frames();
 
 struct SceAvPlayerAudioInfo {
     void* pData;

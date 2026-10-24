@@ -359,6 +359,7 @@ private:
     }
 
     void cleanup_swapchain() {
+        gnm::VulkanShaderPipeline::instance().reset_video_textures();
         if (device_ == VK_NULL_HANDLE) return;
 
         if (!command_buffers_.empty() && command_buffers_[0] != VK_NULL_HANDLE)
@@ -416,6 +417,11 @@ private:
         VkCommandBufferBeginInfo begin_ci{};
         begin_ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         if (vkBeginCommandBuffer(cmd, &begin_ci) != VK_SUCCESS) { render_failed_ = true; return; }
+
+        if (!gnm::VulkanShaderPipeline::instance().prepare_video_textures(
+                cmd, current_frame_, static_cast<std::uint32_t>(command_buffers_.size()))) {
+            render_failed_ = true; return;
+        }
 
         // Transition image to COLOR_ATTACHMENT_OPTIMAL
         VkImageMemoryBarrier2 barrier{};

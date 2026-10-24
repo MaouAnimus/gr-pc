@@ -1,9 +1,11 @@
 #pragma once
 
 #include "hle/gnm/command_queue.h"
+#include "hle/avplayer/video_texture.h"
 #include <vulkan/vulkan.h>
 
 #include <unordered_map>
+#include <memory>
 
 namespace gravity::hle::gnm {
 
@@ -32,6 +34,10 @@ public:
     VkPipelineLayout get_layout() const noexcept { return layout_; }
 
     VkDescriptorSet get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format);
+    // Call outside rendering, after the fence for frame_slot has completed.
+    bool prepare_video_textures(VkCommandBuffer command, std::uint32_t frame_slot, std::uint32_t slot_count);
+    // All submissions using these textures must have completed.
+    void reset_video_textures();
 
 private:
     VulkanShaderPipeline() = default;
@@ -63,6 +69,13 @@ private:
     VkDeviceSize index_buffer_size_{0};
 
     std::unordered_map<uint64_t, CachedTexture> texture_cache_{};
+    struct VideoEntry {
+        std::unique_ptr<avplayer::VideoTexture> texture;
+        VkDescriptorSet descriptor{};
+        std::uint64_t generation{};
+    };
+    std::vector<std::unordered_map<std::uint64_t, VideoEntry>> video_slots_;
+    std::uint32_t video_slot_{};
 
     bool create_buffer(VkPhysicalDevice phys, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buffer, VkDeviceMemory& memory);
     std::uint32_t find_memory_type(VkPhysicalDevice phys, std::uint32_t typeFilter, VkMemoryPropertyFlags properties);

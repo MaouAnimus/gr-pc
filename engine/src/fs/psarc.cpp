@@ -266,8 +266,8 @@ bool PsarcArchive::read_file(const PsarcFileEntry& entry, void* out_buffer, std:
         std::uint16_t bsz = zblocks_[block_idx++];
         std::size_t expected_chunk = (std::min)(remaining, static_cast<std::size_t>(block_size_));
 
-        if (bsz == 0) {
-            // Uncompressed chunk
+        if (bsz == 0 || bsz == expected_chunk) {
+            // A full raw block uses zero; a partial raw block stores its length.
             if (curr_off + expected_chunk > file_size_) return false;
             std::memcpy(out_ptr, mapping_view_ + curr_off, expected_chunk);
             curr_off += expected_chunk;
