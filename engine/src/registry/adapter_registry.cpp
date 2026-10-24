@@ -18,6 +18,10 @@
 #include "hle/libc/libc.h"
 #include "hle/savedata/savedata.h"
 #include "hle/font/font.h"
+#include "hle/rtc/rtc.h"
+#include "hle/avplayer/avplayer.h"
+#include "hle/audio/ngs2.h"
+#include "hle/audio/audio3d.h"
 #include "hle/guest_memory.h"
 #include <ctime>
 #include <windows.h>
@@ -1664,6 +1668,76 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("kAenWy1Zw5o", "libSceFont", "sceFontRenderCharGlyphImageHorizontal", reinterpret_cast<uintptr_t>(&font::sceFontRenderCharGlyphImageHorizontal));
     register_adapter("gdUCnU0gHdI", "libSceFont", "sceFontRenderSurfaceInit", reinterpret_cast<uintptr_t>(&font::sceFontRenderSurfaceInit));
     register_adapter("sDuhHGNhHvE", "libSceFont", "sceFontGetKerning", reinterpret_cast<uintptr_t>(&font::sceFontGetKerning));
+
+    // ---------------------------------------------------------------------
+    // 23. libSceRtc (Real Time Clock)
+    // ---------------------------------------------------------------------
+    register_adapter("18B2NS1y9UU", "libSceRtc", "sceRtcGetCurrentTick", reinterpret_cast<uintptr_t>(&rtc::sceRtcGetCurrentTick));
+    register_adapter("zO9UL3qIINQ", "libSceRtc", "sceRtcGetCurrentNetworkTick", reinterpret_cast<uintptr_t>(&rtc::sceRtcGetCurrentNetworkTick));
+    register_adapter("99bMGglFW3I", "libSceRtc", "sceRtcParseRFC3339", reinterpret_cast<uintptr_t>(&rtc::sceRtcParseRFC3339));
+    register_adapter("NxEI1KByvCI", "libSceRtc", "sceRtcParseDateTime", reinterpret_cast<uintptr_t>(&rtc::sceRtcParseDateTime));
+
+    // ---------------------------------------------------------------------
+    // 24. libSceGnmDriver (EqEvent, Compute Queues, and Razor Capture)
+    // ---------------------------------------------------------------------
+    register_adapter("b0xyllnVY-I", "libSceGnmDriver", "sceGnmAddEqEvent", reinterpret_cast<uintptr_t>(&gnm::sceGnmAddEqEvent));
+    register_adapter("PVT+fuoS9gU", "libSceGnmDriver", "sceGnmDeleteEqEvent", reinterpret_cast<uintptr_t>(&gnm::sceGnmDeleteEqEvent));
+    register_adapter("UoYY0DWMC0U", "libSceGnmDriver", "sceGnmGetEqEventType", reinterpret_cast<uintptr_t>(&gnm::sceGnmGetEqEventType));
+    register_adapter("H7-fgvEutM0", "libSceGnmDriver", "sceGnmGetEqTimeStamp", reinterpret_cast<uintptr_t>(&gnm::sceGnmGetEqTimeStamp));
+    register_adapter("29oKvKXzEZo", "libSceGnmDriver", "sceGnmMapComputeQueue", reinterpret_cast<uintptr_t>(&gnm::sceGnmMapComputeQueue));
+    register_adapter("A+uGq+3KFtQ", "libSceGnmDriver", "sceGnmMapComputeQueueWithPriority", reinterpret_cast<uintptr_t>(&gnm::sceGnmMapComputeQueueWithPriority));
+    register_adapter("ArSg-TGinhk", "libSceGnmDriver", "sceGnmUnmapComputeQueue", reinterpret_cast<uintptr_t>(&gnm::sceGnmUnmapComputeQueue));
+    register_adapter("gObODli-OH8", "libSceGnmDriver", "sceGnmRequestFlipAndSubmitDone", reinterpret_cast<uintptr_t>(&gnm::sceGnmRequestFlipAndSubmitDone));
+    register_adapter("jtkqXpAOY6w", "libSceGnmDriver", "sceGnmSetGsRingSizes", reinterpret_cast<uintptr_t>(&gnm::sceGnmSetGsRingSizes));
+    register_adapter("u9YKpRRHe-M", "libSceGnmDriver", "sceRazorCaptureImmediate", reinterpret_cast<uintptr_t>(&gnm::sceRazorCaptureImmediate));
+    register_adapter("4UFagYlfuAM", "libSceGnmDriver", "sceRazorCaptureSinceLastFlip", reinterpret_cast<uintptr_t>(&gnm::sceRazorCaptureSinceLastFlip));
+    register_adapter("xeTLfxVIQO4", "libSceGnmDriver", "sceRazorCaptureCommandBuffersOnlyImmediate", reinterpret_cast<uintptr_t>(&gnm::sceRazorCaptureCommandBuffersOnlyImmediate));
+    register_adapter("9thMn+uB1is", "libSceGnmDriver", "sceRazorCaptureCommandBuffersOnlySinceLastFlip", reinterpret_cast<uintptr_t>(&gnm::sceRazorCaptureCommandBuffersOnlySinceLastFlip));
+
+    // ---------------------------------------------------------------------
+    // 25. libSceAvPlayer (Video and Audio Stream Decoder)
+    // ---------------------------------------------------------------------
+    register_adapter("aS66RI0gGgo", "libSceAvPlayer", "sceAvPlayerInit", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerInit));
+    register_adapter("HD1YKVU26-M", "libSceAvPlayer", "sceAvPlayerPostInit", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerPostInit));
+    register_adapter("NkJwDzKmIlw", "libSceAvPlayer", "sceAvPlayerClose", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerClose));
+    register_adapter("KMcEa+rHsIo", "libSceAvPlayer", "sceAvPlayerAddSource", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerAddSource));
+    register_adapter("OVths0xGfho", "libSceAvPlayer", "sceAvPlayerSetLooping", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerSetLooping));
+    register_adapter("ET4Gr-Uu07s", "libSceAvPlayer", "sceAvPlayerStart", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerStart));
+    register_adapter("ZC17w3vB5Lo", "libSceAvPlayer", "sceAvPlayerStop", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerStop));
+    register_adapter("9y5v+fGN4Wk", "libSceAvPlayer", "sceAvPlayerPause", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerPause));
+    register_adapter("w5moABNwnRY", "libSceAvPlayer", "sceAvPlayerResume", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerResume));
+    register_adapter("UbQoYawOsfY", "libSceAvPlayer", "sceAvPlayerIsActive", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerIsActive));
+    register_adapter("hdTyRzCXQeQ", "libSceAvPlayer", "sceAvPlayerStreamCount", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerStreamCount));
+    register_adapter("d8FcbzfAdQw", "libSceAvPlayer", "sceAvPlayerGetStreamInfo", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerGetStreamInfo));
+    register_adapter("ODJK2sn9w4A", "libSceAvPlayer", "sceAvPlayerEnableStream", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerEnableStream));
+    register_adapter("JdksQu8pNdQ", "libSceAvPlayer", "sceAvPlayerGetVideoDataEx", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerGetVideoDataEx));
+    register_adapter("Wnp1OVcrZgk", "libSceAvPlayer", "sceAvPlayerGetAudioData", reinterpret_cast<uintptr_t>(&avplayer::sceAvPlayerGetAudioData));
+
+    // ---------------------------------------------------------------------
+    // 26. libSceNgs2 (Next-Gen Sound 2 Voice and Rack System)
+    // ---------------------------------------------------------------------
+    register_adapter("mPYgU4oYpuY", "libSceNgs2", "sceNgs2SystemCreateWithAllocator", reinterpret_cast<uintptr_t>(&audio::sceNgs2SystemCreateWithAllocator));
+    register_adapter("u-WrYDaJA3k", "libSceNgs2", "sceNgs2SystemDestroy", reinterpret_cast<uintptr_t>(&audio::sceNgs2SystemDestroy));
+    register_adapter("0eFLVCfWVds", "libSceNgs2", "sceNgs2RackQueryBufferSize", reinterpret_cast<uintptr_t>(&audio::sceNgs2RackQueryBufferSize));
+    register_adapter("cLV4aiT9JpA", "libSceNgs2", "sceNgs2RackCreate", reinterpret_cast<uintptr_t>(&audio::sceNgs2RackCreate));
+    register_adapter("U546k6orxQo", "libSceNgs2", "sceNgs2RackCreateWithAllocator", reinterpret_cast<uintptr_t>(&audio::sceNgs2RackCreateWithAllocator));
+    register_adapter("lCqD7oycmIM", "libSceNgs2", "sceNgs2RackDestroy", reinterpret_cast<uintptr_t>(&audio::sceNgs2RackDestroy));
+    register_adapter("MwmHz8pAdAo", "libSceNgs2", "sceNgs2RackGetVoiceHandle", reinterpret_cast<uintptr_t>(&audio::sceNgs2RackGetVoiceHandle));
+    register_adapter("uu94irFOGpA", "libSceNgs2", "sceNgs2VoiceControl", reinterpret_cast<uintptr_t>(&audio::sceNgs2VoiceControl));
+    register_adapter("-TOuuAQ-buE", "libSceNgs2", "sceNgs2VoiceGetState", reinterpret_cast<uintptr_t>(&audio::sceNgs2VoiceGetState));
+    register_adapter("i0VnXM-C9fc", "libSceNgs2", "sceNgs2SystemRender", reinterpret_cast<uintptr_t>(&audio::sceNgs2SystemRender));
+
+    // ---------------------------------------------------------------------
+    // 27. libSceAudio3d (3D Positional Spatial Audio)
+    // ---------------------------------------------------------------------
+    register_adapter("UmCvjSmuZIw", "libSceAudio3d", "sceAudio3dInitialize", reinterpret_cast<uintptr_t>(&audio::sceAudio3dInitialize));
+    register_adapter("WW1TS2iz5yc", "libSceAudio3d", "sceAudio3dTerminate", reinterpret_cast<uintptr_t>(&audio::sceAudio3dTerminate));
+    register_adapter("XeDDK0xJWQA", "libSceAudio3d", "sceAudio3dPortOpen", reinterpret_cast<uintptr_t>(&audio::sceAudio3dPortOpen));
+    register_adapter("OyVqOeVNtSk", "libSceAudio3d", "sceAudio3dPortClose", reinterpret_cast<uintptr_t>(&audio::sceAudio3dPortClose));
+    register_adapter("ZOGrxWLgQzE", "libSceAudio3d", "sceAudio3dPortFlush", reinterpret_cast<uintptr_t>(&audio::sceAudio3dPortFlush));
+    register_adapter("jO2tec4dJ2M", "libSceAudio3d", "sceAudio3dObjectReserve", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectReserve));
+    register_adapter("1HXxo-+1qCw", "libSceAudio3d", "sceAudio3dObjectUnreserve", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectUnreserve));
+    register_adapter("4uyHN9q4ZeU", "libSceAudio3d", "sceAudio3dObjectSetAttributes", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectSetAttributes));
 }
 
 } // namespace gravity::hle

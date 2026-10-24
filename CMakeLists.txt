@@ -41,6 +41,10 @@ add_library(gravity_runtime STATIC
     engine/src/font/font.cpp
     engine/src/gnm/shader_pipeline.cpp
     engine/src/libc/libc.cpp
+    engine/src/avplayer/avplayer.cpp
+    engine/src/rtc/rtc.cpp
+    engine/src/audio/ngs2.cpp
+    engine/src/audio/audio3d.cpp
     engine/src/registry/adapter_registry.cpp)
 target_include_directories(gravity_runtime PUBLIC engine/include C:/msys64/clang64/include/freetype2)
 target_compile_features(gravity_runtime PUBLIC cxx_std_23)
@@ -221,6 +225,33 @@ if(BUILD_TESTING)
     foreach(suite lifecycle metrics_rendering)
         add_test(NAME font_${suite} COMMAND font_tests ${suite})
         set_tests_properties(font_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+
+    # RTC tests
+    add_executable(rtc_tests tests/rtc_tests.cpp)
+    target_link_libraries(rtc_tests PRIVATE gravity_runtime)
+    target_compile_options(rtc_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite ticks rfc3339 datetime)
+        add_test(NAME rtc_${suite} COMMAND rtc_tests ${suite})
+        set_tests_properties(rtc_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+
+    # AvPlayer tests
+    add_executable(avplayer_tests tests/avplayer_tests.cpp)
+    target_link_libraries(avplayer_tests PRIVATE gravity_runtime)
+    target_compile_options(avplayer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite lifecycle playback)
+        add_test(NAME avplayer_${suite} COMMAND avplayer_tests ${suite})
+        set_tests_properties(avplayer_${suite} PROPERTIES TIMEOUT 10)
+    endforeach()
+
+    # NGS2 & Audio3D tests
+    add_executable(audio_advanced_tests tests/audio_advanced_tests.cpp)
+    target_link_libraries(audio_advanced_tests PRIVATE gravity_runtime)
+    target_compile_options(audio_advanced_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    foreach(suite ngs2 audio3d)
+        add_test(NAME audio_advanced_${suite} COMMAND audio_advanced_tests ${suite})
+        set_tests_properties(audio_advanced_${suite} PROPERTIES TIMEOUT 10)
     endforeach()
 endif()
 

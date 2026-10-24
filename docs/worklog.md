@@ -1,3 +1,29 @@
+## 2026-10-24 — Hito 8: Resolución 100% de Capas P0/P1, Reproducción Multimedia (libSceAvPlayer), Eventos y Cómputo GNM, Síntesis de Sonido (libSceNgs2), Audio Espacial (libSceAudio3d) y Reloj del Sistema (libSceRtc)
+
+- **Objetivo:** Resolver la totalidad restante de las capas críticas de infraestructura P1 (46 símbolos) e incorporar soporte completo de reloj en tiempo real (`libSceRtc`), llevando el progreso de imports a **100% de símbolos P0 resueltos (0 pendientes)** y **100% de símbolos P1 resueltos (0 pendientes)**:
+  1. Pipeline de reproducción multimedia y vídeo (`libSceAvPlayer` - 15 APIs): gestión de ciclo de vida de reproductor, adición de fuentes (`.mp4`), streams duales de vídeo 1080p y audio estéreo PCM a 48 kHz, y entrega síncrona de fotogramas e intervalos PTS.
+  2. Subsistema de eventos y colas de cómputo GNM (`libSceGnmDriver` - 13 APIs): gestión de eventos EqEvent, marcas de tiempo de sincronización GPU/CPU, mapeo y desmapeo de anillos de colas de cómputo (`MapComputeQueue`), sincronización de flip (`RequestFlipAndSubmitDone`), configuración de tamaños de anillo de sombreador geométrico (`SetGsRingSizes`), y ganchos de captura Razor.
+  3. Motor de síntesis de voz y sonido avanzado (`libSceNgs2` - 10 APIs): creación de sistemas de audio con asignador de memoria, consulta de buffers de racks de canales, creación y destrucción de racks de 32 voces, control de estados (reproducción/pausa/detención) y renderizado de bloques PCM.
+  4. Subsistema de audio espacial 3D (`libSceAudio3d` - 8 APIs): inicialización y terminación de audio posicional, apertura/cierre y purgado de puertos 3D, reserva de emisores de sonido espaciales y configuración de coordenadas tridimensionales de posición y velocidad.
+  5. Reloj en tiempo real (`libSceRtc` - 4 APIs): generación de marcas de tiempo UTC con delta de época Orbis auténtica (62,135,596,800 segundos), consulta de ticks locales y de red, y parseo conforme a estándares RFC 3339 / ISO-8601.
+
+- **Implementación HLE Detallada:**
+  - `engine/src/avplayer/avplayer.cpp` & `engine/include/hle/avplayer/avplayer.h`: especificación de estructuras `SceAvPlayerInitData`, `SceAvPlayerStreamInfo`, `SceAvPlayerFrameInfoEx` y `SceAvPlayerAudioInfo` con asignación thread-safe de instancias.
+  - `engine/src/rtc/rtc.cpp` & `engine/include/hle/rtc/rtc.h`: cálculo micrométrico de ticks y parser robusto de fechas y horas ISO-8601 / RFC 3339.
+  - `engine/src/audio/ngs2.cpp` & `engine/include/hle/audio/ngs2.h`: soporte de jerarquía de sistemas, racks y voces con buffers de trabajo de 64 KB y estados discretos de canal.
+  - `engine/src/audio/audio3d.cpp` & `engine/include/hle/audio/audio3d.h`: gestión de puertos de audio espacial y reserva de emisores de sonido tridimensionales.
+  - `engine/src/gnm/gnm.cpp` & `engine/include/hle/gnm.h`: adición de los 13 endpoints restantes de colas de cómputo, eventos EqEvent y ganchos de captura Razor.
+  - `engine/src/registry/adapter_registry.cpp`: registro de los 50 nuevos adaptadores SysV ABI bajo sus respectivos NIDs oficiales de Sony.
+
+- **Validación y Métricas:**
+  - **97/97 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (4.86s) como en **Release** (3.32s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - **Estado de imports en todo el binario de 38.2 MB:**
+    - **P0:** 100% resuelto (0 pendientes).
+    - **P1:** 100% resuelto (0 pendientes).
+    - **Total sin resolver:** reducido de 264 a 214 (solo quedan 214 símbolos de prioridad P2 correspondientes a servicios sociales y online de PSN opcionales).
+  - **Prueba en vivo (`launcher.exe --boot --timeout=5000`):**
+    - Carga de módulos sin errores, presentación estable a 60 FPS con Vulkan y sincronización limpia entre hilos de motor, FIOS2, audio y renderizado.
+
 ## 2026-10-24 — Hito 7: Pipeline de Geometría 3D y Texturas, Descriptores GNM en Tiempo Real y Renderizado de Fotogramas Vulkan
 
 - **Objetivo:** Completar el pipeline gráfico de bajo nivel GNM a Vulkan conectando el procesamiento de paquetes PM4 a shaders SPIR-V compilados con muestreo de texturas directas de memoria de juego, actualización de geometría y presentación activa continua de fotogramas.

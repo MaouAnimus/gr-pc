@@ -167,6 +167,32 @@ namespace gravity::hle::gnm {
         sceGnmRequestMipStatsReportAndReset();
     extern "C" GRAVITY_SYSV_ABI void
         sceGnmSetupMipStatsReport();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmAddEqEvent(int32_t eq, int32_t event_type, int32_t id);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmDeleteEqEvent(int32_t eq, int32_t id);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmGetEqEventType(const void* eq_event_data);
+    extern "C" GRAVITY_SYSV_ABI uint64_t
+        sceGnmGetEqTimeStamp(const void* eq_event_data);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmMapComputeQueue(uint32_t pipe_id, uint32_t queue_id, uint64_t ring_addr, uint32_t ring_size);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmMapComputeQueueWithPriority(uint32_t pipe_id, uint32_t queue_id, uint64_t ring_addr, uint32_t ring_size, uint32_t priority);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmUnmapComputeQueue(uint32_t pipe_id, uint32_t queue_id);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmRequestFlipAndSubmitDone(uint32_t video_out_handle, uint32_t display_buffer_index);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceGnmSetGsRingSizes(uint32_t es_gs_ring_size, uint32_t gs_vs_ring_size);
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceRazorCaptureImmediate();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceRazorCaptureSinceLastFlip();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceRazorCaptureCommandBuffersOnlyImmediate();
+    extern "C" GRAVITY_SYSV_ABI int32_t
+        sceRazorCaptureCommandBuffersOnlySinceLastFlip();
 
     // Diagnostics / Query
     bool gnm_is_initialized() noexcept;

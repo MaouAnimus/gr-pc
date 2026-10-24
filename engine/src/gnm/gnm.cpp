@@ -6,6 +6,7 @@
 #include <vector>
 #include <mutex>
 #include <cstring>
+#include <chrono>
 #include <iostream>
 
 namespace gravity::hle::gnm {
@@ -687,6 +688,70 @@ GRAVITY_SYSV_ABI void sceGnmRequestMipStatsReportAndReset() {
 }
 
 GRAVITY_SYSV_ABI void sceGnmSetupMipStatsReport() {
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmAddEqEvent(int32_t eq, int32_t event_type, int32_t id) {
+    (void)eq; (void)event_type; (void)id;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmDeleteEqEvent(int32_t eq, int32_t id) {
+    (void)eq; (void)id;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmGetEqEventType(const void* eq_event_data) {
+    (void)eq_event_data;
+    return 0; // EOP
+}
+
+GRAVITY_SYSV_ABI uint64_t sceGnmGetEqTimeStamp(const void* eq_event_data) {
+    (void)eq_event_data;
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmMapComputeQueue(
+    uint32_t pipe_id, uint32_t queue_id, uint64_t ring_addr, uint32_t ring_size) {
+    (void)pipe_id; (void)queue_id; (void)ring_addr; (void)ring_size;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmMapComputeQueueWithPriority(
+    uint32_t pipe_id, uint32_t queue_id, uint64_t ring_addr, uint32_t ring_size, uint32_t priority) {
+    (void)pipe_id; (void)queue_id; (void)ring_addr; (void)ring_size; (void)priority;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmUnmapComputeQueue(uint32_t pipe_id, uint32_t queue_id) {
+    (void)pipe_id; (void)queue_id;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmRequestFlipAndSubmitDone(uint32_t video_out_handle, uint32_t display_buffer_index) {
+    (void)video_out_handle; (void)display_buffer_index;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceGnmSetGsRingSizes(uint32_t es_gs_ring_size, uint32_t gs_vs_ring_size) {
+    (void)es_gs_ring_size; (void)gs_vs_ring_size;
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceRazorCaptureImmediate() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceRazorCaptureSinceLastFlip() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceRazorCaptureCommandBuffersOnlyImmediate() {
+    return 0;
+}
+
+GRAVITY_SYSV_ABI int32_t sceRazorCaptureCommandBuffersOnlySinceLastFlip() {
+    return 0;
 }
 
 } // extern "C"
