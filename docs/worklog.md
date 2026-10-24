@@ -1,3 +1,31 @@
+## 2026-10-24 — Lote Libc, Kernel P0 y Variables de Condición (Reducción de No Resueltos a 324)
+
+- **Objetivo:** Completar la capa de emulación HLE de la biblioteca estándar (`libc`), soporte Dinkumware C++, `libkernel` (variables de condición `pthread_cond`, atomics, TLS `__tls_get_addr`), gestión de heaps aislados (`sceLibcMspace*`) y streams estándar para evitar trampas de diagnóstico durante la inicialización del motor.
+- **Implementación HLE:**
+  - **Variables de Condición (`pthread_sync`):**
+    - Implementación completa de `posix_cond_init`, `posix_cond_destroy`, `posix_cond_signal`, `posix_cond_broadcast`, `posix_cond_wait`, `posix_cond_reltimedwait`, `posix_cond_timedwait` y sus atributos `posix_condattr_*`.
+    - Adaptadores `scePthreadCond*` de `libkernel` vinculados a los primitivos POSIX del host.
+  - **Dinkumware & Libc Runtime (`libc`):**
+    - Funciones matemáticas de Dinkumware: `_Cosh`, `_Sinh`, `_Sin`, `_Log`, `_FLog`, `fmax`, `fmaxf`, `fminf`, `frexp`, `ldexp`, `modf`, `difftime`.
+    - Conversiones numéricas y temporales: `_Stod`, `_Stoll`, `_Stoul`, `_Stoull`, `gmtime`, `localtime`, `mktime`, `clock_gettime`.
+    - Cadenas y memoria seguras: `strerror`, `strcoll`, `strcspn`, `strpbrk`, `strtok`, `strnlen_s`, `memcpy_s`.
+    - Entrada/Salida estándar: `clearerr`, `feof`, `ferror`, `fflush`, `fgets`, `fputc`, `fread`, `freopen`, `fseek`, `ftell`, `fwrite`, `getc`, `ungetc`, `perror`, `remove`, `rename`, `setvbuf`, `fprintf`, `fscanf`.
+    - C++ ABI & RTTI: `__cxa_pure_virtual`, `__cxa_atexit`, `_ZNSt8ios_base4InitC1Ev`, `_ZNSt8ios_base4InitD1Ev`, `__cxa_allocate_exception`, `__cxa_throw`, `__cxa_rethrow`, `__cxa_begin_catch`, `__cxa_end_catch`, `__cxa_call_unexpected`, `_Unwind_Resume`, `__gxx_personality_v0`, `_ZSt9terminatev`, variables `_ZSt7nothrow`, `_ZTIi`, `_ZTVN10__cxxabiv117__class_type_infoE`, `_ZTVN10__cxxabiv120__si_class_type_infoE`.
+  - **Mspace Heaps (`sceLibcMspace*`):**
+    - Emulación completa de las 12 APIs de heap `sceLibcMspaceCreate`, `sceLibcMspaceDestroy`, `sceLibcMspaceMalloc`, `sceLibcMspaceFree`, `sceLibcMspaceRealloc`, `sceLibcMspaceCalloc`, `sceLibcMspaceMemalign`, `sceLibcMspacePosixMemalign`, `sceLibcMspaceMallocStats`, `sceLibcMspaceMallocStatsFast`, `sceLibcMspaceMallocUsableSize`, `sceLibcMspaceReallocalign`.
+  - **Atomics, Bloqueos y Tablas Locales:**
+    - Atomics Dinkumware de 32 bits: `_Atomic_fetch_add_4`, `_Atomic_fetch_sub_4`.
+    - Bloqueos de sistema: `_Locksyslock`, `_Unlocksyslock`.
+    - Punteros a tablas de caracteres: `_Getpctype` y `_Getptolower`.
+    - Destructor de `std::_Locinfo` (`_ZNSt8_LocinfoD1Ev`).
+    - Estructuras estándar de stream `__std_stdin`, `__std_stdout`, `__std_stderr` (456 bytes) y constantes enteras (`P330P3dFF68`).
+  - **TLS Dinámico:**
+    - Implementación de `__tls_get_addr` (`vNe1w4diLCs`) enlazando directamente al slot GS de `NativeTls::current_thread_pointer()`.
+- **Resultados y Verificación:**
+  - 84/84 pruebas unitarias aprobadas (100%) en configuraciones **Debug** y **Release** bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - Importaciones no resueltas reducidas de 423 a 324 (99 símbolos resueltos en total; 99 de los 115 símbolos P0 resueltos, quedando solo 16 P0).
+  - Verificación de ejecución con `launcher.exe --headless --boot`: el juego avanza fluidamente a través de múltiples hilos (`FontTextureDeleteThread`, `JobSyncSema`, `BackgroundFiber`, `FIOS2Driver`, `Spooler`), gestiona el puerto de visualización 1080p, reserva y mapea memoria directa, inicia PlayGo y FIOS2 montando `.psarc`, y realiza los primeros ciclos de flip sin sufrir ningún fallo o trampa de diagnóstico.
+
 ## 2026-10-24 — Emulación HLE de libSceFios2 (File I/O System 2) y Pipeline de Streaming de Activos
 
 - **Objetivo:** Emulación completa de `libSceFios2` respaldada por `VfsManager` y montaje `.psarc`, resolviendo el 100% (41/41) de los imports de FIOS en `eboot.bin` para permitir el streaming de recursos desde `/app0/arc/arc_0_ep_0_0.psarc`.

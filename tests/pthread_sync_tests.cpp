@@ -59,6 +59,46 @@ int main(int argc, char** argv) {
         Opaque invalid = 123;
         CHECK(posix_mutex_unlock(&invalid) == 22);
         CHECK(posix_mutexattr_destroy(&invalid) == 22);
+        CHECK(posix_condattr_init(nullptr) == 22);
+        CHECK(posix_cond_signal(reinterpret_cast<Opaque*>(1)) == 22);
+    } else if (suite == "cond") {
+        Opaque cond_attr{};
+        CHECK(posix_condattr_init(&cond_attr) == 0);
+        CHECK(posix_condattr_destroy(&cond_attr) == 0);
+
+        Opaque cond{};
+        Opaque mutex{};
+        CHECK(posix_mutex_init(&mutex, nullptr) == 0);
+        CHECK(posix_cond_init(&cond, nullptr) == 0);
+
+        bool signaled = false;
+        std::thread waiter([&] {
+            CHECK(posix_mutex_lock(&mutex) == 0);
+            while (!signaled) {
+                CHECK(posix_cond_wait(&cond, &mutex) == 0);
+            }
+            CHECK(posix_mutex_unlock(&mutex) == 0);
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK(posix_mutex_lock(&mutex) == 0);
+        signaled = true;
+        CHECK(posix_cond_signal(&cond) == 0);
+        CHECK(posix_mutex_unlock(&mutex) == 0);
+        waiter.join();
+
+        // Timed wait should time out
+        CHECK(posix_mutex_lock(&mutex) == 0);
+        int rc = posix_cond_reltimedwait(&cond, &mutex, 2000);
+        CHECK(rc == 60); // ETIMEDOUT
+        CHECK(posix_mutex_unlock(&mutex) == 0);
+
+        // scePthreadCond wrappers
+        CHECK(scePthreadCondSignal(&cond) == 0);
+        CHECK(scePthreadCondBroadcast(&cond) == 0);
+
+        CHECK(posix_cond_destroy(&cond) == 0);
+        CHECK(posix_mutex_destroy(&mutex) == 0);
     } else return 2;
-    std::puts("PASS pthread mutex");
+    std::puts("PASS pthread sync");
 }

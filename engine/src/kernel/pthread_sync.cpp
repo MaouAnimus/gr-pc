@@ -136,4 +136,202 @@ extern "C" GRAVITY_SYSV_ABI int posix_mutex_unlock(Opaque* slot) {
     }
     return 0;
 }
+
+namespace {
+struct CondVar {
+    std::mutex state;
+    std::condition_variable cv;
+    unsigned waiters{0};
+    bool deleted{false};
+};
+std::map<Opaque, std::shared_ptr<CondVar>> conds;
+std::map<Opaque, int> cond_attributes;
+
+std::shared_ptr<CondVar> lookup_cond(Opaque* slot, bool lazy) {
+    std::lock_guard lock(registry_mutex);
+    Opaque token{};
+    if (!read_token(slot, token)) return {};
+    if (!token && lazy) {
+        auto cond = std::make_shared<CondVar>();
+        token = next_token++;
+        if (!write_token(slot, token)) return {};
+        conds.emplace(token, std::move(cond));
+    }
+    const auto it = conds.find(token);
+    return it == conds.end() ? nullptr : it->second;
 }
+
+int cond_wait_internal(Opaque* cond_slot, Opaque* mutex_slot, const std::uint64_t* micros) {
+    const auto cond = lookup_cond(cond_slot, true);
+    const auto mutex = lookup(mutex_slot, true);
+    if (!cond || !mutex) return invalid;
+
+    const auto thread = GetCurrentThreadId();
+    unsigned saved_depth = 0;
+
+    {
+        std::lock_guard lock(mutex->state);
+        if (mutex->deleted || mutex->owner != thread) return permission;
+        saved_depth = mutex->depth;
+        mutex->depth = 0;
+        mutex->owner = 0;
+        mutex->changed.notify_one();
+    }
+
+    bool timeout_occurred = false;
+    {
+        std::unique_lock cond_lock(cond->state);
+        if (cond->deleted) {
+            acquire(mutex_slot, false, nullptr);
+            return invalid;
+        }
+        ++cond->waiters;
+        if (micros) {
+            auto status = cond->cv.wait_for(cond_lock, std::chrono::microseconds(*micros));
+            if (status == std::cv_status::timeout) timeout_occurred = true;
+        } else {
+            cond->cv.wait(cond_lock);
+        }
+        --cond->waiters;
+    }
+
+    int err = acquire(mutex_slot, false, nullptr);
+    if (err != 0) return err;
+
+    {
+        std::lock_guard lock(mutex->state);
+        if (mutex->owner == thread) {
+            mutex->depth = saved_depth;
+        }
+    }
+
+    return timeout_occurred ? timeout : 0;
+}
+} // anonymous namespace
+
+extern "C" GRAVITY_SYSV_ABI int posix_condattr_init(Opaque* attr) {
+    std::lock_guard lock(registry_mutex);
+    const auto token = next_token++;
+    if (!write_token(attr, token)) return invalid;
+    cond_attributes[token] = 1;
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_condattr_destroy(Opaque* attr) {
+    std::lock_guard lock(registry_mutex);
+    Opaque token{};
+    if (!read_token(attr, token) || !cond_attributes.contains(token) || !write_token(attr, 0)) return invalid;
+    cond_attributes.erase(token);
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_init(Opaque* slot, const Opaque* attr) {
+    (void)attr;
+    std::lock_guard lock(registry_mutex);
+    auto cond = std::make_shared<CondVar>();
+    const auto token = next_token++;
+    if (!write_token(slot, token)) return invalid;
+    conds.emplace(token, std::move(cond));
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_destroy(Opaque* slot) {
+    const auto cond = lookup_cond(slot, false);
+    if (!cond) return invalid;
+    std::lock_guard lock(cond->state);
+    if (cond->deleted) return invalid;
+    if (cond->waiters > 0) return busy;
+    std::lock_guard registry_lock(registry_mutex);
+    Opaque token{};
+    if (!read_token(slot, token) || !write_token(slot, UINT64_MAX)) return invalid;
+    cond->deleted = true;
+    conds.erase(token);
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_signal(Opaque* slot) {
+    const auto cond = lookup_cond(slot, true);
+    if (!cond) return invalid;
+    std::lock_guard lock(cond->state);
+    if (cond->deleted) return invalid;
+    cond->cv.notify_one();
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_broadcast(Opaque* slot) {
+    const auto cond = lookup_cond(slot, true);
+    if (!cond) return invalid;
+    std::lock_guard lock(cond->state);
+    if (cond->deleted) return invalid;
+    cond->cv.notify_all();
+    return 0;
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_wait(Opaque* cond, Opaque* mutex) {
+    return cond_wait_internal(cond, mutex, nullptr);
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_reltimedwait(Opaque* cond, Opaque* mutex, std::uint64_t micros) {
+    if (micros > static_cast<std::uint64_t>(INT64_MAX)) return invalid;
+    return cond_wait_internal(cond, mutex, &micros);
+}
+
+extern "C" GRAVITY_SYSV_ABI int posix_cond_timedwait(Opaque* cond, Opaque* mutex, const void* abstime) {
+    if (!abstime) return invalid;
+    struct GuestTimespec {
+        std::int64_t tv_sec;
+        std::int64_t tv_nsec;
+    };
+    if (!guest_memory::accessible(abstime, sizeof(GuestTimespec))) return invalid;
+    const auto* ts = static_cast<const GuestTimespec*>(abstime);
+    if (ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000) return invalid;
+
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER uli;
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+    std::uint64_t now_us = (uli.QuadPart - 116444736000000000ULL) / 10;
+    std::uint64_t target_us = static_cast<std::uint64_t>(ts->tv_sec) * 1000000ULL + static_cast<std::uint64_t>(ts->tv_nsec / 1000);
+
+    if (target_us <= now_us) {
+        return 60; // ETIMEDOUT
+    }
+    std::uint64_t rel_us = target_us - now_us;
+    return posix_cond_reltimedwait(cond, mutex, rel_us);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondInit(Opaque* cond, const Opaque* attr, const char* name) {
+    (void)name;
+    return posix_cond_init(cond, attr);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondDestroy(Opaque* cond) {
+    return posix_cond_destroy(cond);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondSignal(Opaque* cond) {
+    return posix_cond_signal(cond);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondBroadcast(Opaque* cond) {
+    return posix_cond_broadcast(cond);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondWait(Opaque* cond, Opaque* mutex) {
+    return posix_cond_wait(cond, mutex);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondTimedwait(Opaque* cond, Opaque* mutex, std::uint64_t usec) {
+    return posix_cond_reltimedwait(cond, mutex, usec);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondattrInit(Opaque* attr) {
+    return posix_condattr_init(attr);
+}
+
+extern "C" GRAVITY_SYSV_ABI int scePthreadCondattrDestroy(Opaque* attr) {
+    return posix_condattr_destroy(attr);
+}
+}
+

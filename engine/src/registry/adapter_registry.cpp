@@ -15,6 +15,7 @@
 #include "hle/kernel/direct_memory.h"
 #include "hle/fs/fios.h"
 #include "hle/playgo.h"
+#include "hle/libc/libc.h"
 #include "hle/guest_memory.h"
 #include <ctime>
 #include <windows.h>
@@ -307,12 +308,6 @@ extern "C" GRAVITY_SYSV_ABI void hle_cxa_guard_release(uint64_t* guard) {
     if (!guard) return;
     auto* b = reinterpret_cast<uint8_t*>(guard);
     *b = 1;
-}
-extern "C" GRAVITY_SYSV_ABI int hle_cxa_atexit(void (*func)(void*), void* arg, void* dso) {
-    (void)func;
-    (void)arg;
-    (void)dso;
-    return 0;
 }
 extern "C" GRAVITY_SYSV_ABI void hle_cxx_init_dummy(void* obj) {
     (void)obj;
@@ -952,7 +947,7 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("bzQExy189ZI", "libc", "libc_init", reinterpret_cast<uintptr_t>(&hle_libc_init));
     register_adapter("3GPpjQdAMTw", "libc", "__cxa_guard_acquire", reinterpret_cast<uintptr_t>(&hle_cxa_guard_acquire));
     register_adapter("9rAeANT2tyE", "libc", "__cxa_guard_release", reinterpret_cast<uintptr_t>(&hle_cxa_guard_release));
-    register_adapter("tsvEmnenz48", "libc", "__cxa_atexit", reinterpret_cast<uintptr_t>(&hle_cxa_atexit));
+    register_adapter("tsvEmnenz48", "libc", "__cxa_atexit", reinterpret_cast<uintptr_t>(&libc::hle_cxa_atexit));
     register_adapter("-Bl9-SZ2noc", "libc", "ios_init", reinterpret_cast<uintptr_t>(&hle_cxx_init_dummy));
     register_adapter("Uw3OTZFPNt4", "libc", "ios_fini", reinterpret_cast<uintptr_t>(&hle_cxx_init_dummy));
     register_adapter("ZtjspkJQ+vw", "libc", "__kernel_sincosf", reinterpret_cast<uintptr_t>(&hle_kernel_sincosf));
@@ -1311,6 +1306,171 @@ void AdapterRegistry::initialize_builtin_adapters() {
                      reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetLocus));
     register_adapter("v6EZ-YWRdMs", "libScePlayGo", "scePlayGoGetEta",
                      reinterpret_cast<uintptr_t>(&playgo::scePlayGoGetEta));
+
+    // ---------------------------------------------------------------------
+    // 11. libkernel & libScePosix Condition Variables
+    // ---------------------------------------------------------------------
+    register_adapter("2Tb92quprl0", "libkernel", "scePthreadCondInit",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondInit));
+    register_adapter("g+PZd2hiacg", "libkernel", "scePthreadCondDestroy",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondDestroy));
+    register_adapter("kDh-NfxgMtE", "libkernel", "scePthreadCondSignal",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondSignal));
+    register_adapter("JGgj7Uvrl+A", "libkernel", "scePthreadCondBroadcast",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondBroadcast));
+    register_adapter("WKAXJ4XBPQ4", "libkernel", "scePthreadCondWait",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondWait));
+    register_adapter("BmMjYxmew1w", "libkernel", "scePthreadCondTimedwait",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondTimedwait));
+    register_adapter("m5-2bsNfv7s", "libkernel", "scePthreadCondattrInit",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondattrInit));
+    register_adapter("waPcxYiR3WA", "libkernel", "scePthreadCondattrDestroy",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::scePthreadCondattrDestroy));
+
+    // libScePosix Condition Variables
+    register_adapter("0TyVk4MSLt0", "libScePosix", "pthread_cond_init",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_init));
+    register_adapter("RXXqi4CtF8w", "libScePosix", "pthread_cond_destroy",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_destroy));
+    register_adapter("2MOy+rUfuhQ", "libScePosix", "pthread_cond_signal",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_signal));
+    register_adapter("mkx2fVhNMsg", "libScePosix", "pthread_cond_broadcast",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_broadcast));
+    register_adapter("Op8TBGY5KHg", "libScePosix", "pthread_cond_wait",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_wait));
+    register_adapter("27bAgiJmOh0", "libScePosix", "pthread_cond_timedwait",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_cond_timedwait));
+    register_adapter("mKoTx03HRWA", "libScePosix", "pthread_condattr_init",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_condattr_init));
+    register_adapter("dJcuQVn6-Iw", "libScePosix", "pthread_condattr_destroy",
+                     reinterpret_cast<uintptr_t>(&pthread_sync::posix_condattr_destroy));
+
+    // ---------------------------------------------------------------------
+    // 12. libc Math, Floats & Dinkumware Math
+    // ---------------------------------------------------------------------
+    register_adapter("KeOZ19X8-Ug", "libc", "_Cosh", reinterpret_cast<uintptr_t>(&libc::hle_Cosh));
+    register_adapter("MU25eqxSDTw", "libc", "_Sinh", reinterpret_cast<uintptr_t>(&libc::hle_Sinh));
+    register_adapter("cCXjU72Z0Ow", "libc", "_Sin", reinterpret_cast<uintptr_t>(&libc::hle_Sin));
+    register_adapter("zXCi78bYrEI", "libc", "_Log", reinterpret_cast<uintptr_t>(&libc::hle_Log));
+    register_adapter("jjjRS7l1MPM", "libc", "_FLog", reinterpret_cast<uintptr_t>(&libc::hle_FLog));
+    register_adapter("fiOgmWkP+Xc", "libc", "fmax", reinterpret_cast<uintptr_t>(&libc::hle_fmax));
+    register_adapter("Lyx2DzUL7Lc", "libc", "fmaxf", reinterpret_cast<uintptr_t>(&libc::hle_fmaxf));
+    register_adapter("uVRcM2yFdP4", "libc", "fminf", reinterpret_cast<uintptr_t>(&libc::hle_fminf));
+    register_adapter("kA-TdiOCsaY", "libc", "frexp", reinterpret_cast<uintptr_t>(&libc::hle_frexp));
+    register_adapter("JrwFIMzKNr0", "libc", "ldexp", reinterpret_cast<uintptr_t>(&libc::hle_ldexp));
+    register_adapter("0WMHDb5Dt94", "libc", "modf", reinterpret_cast<uintptr_t>(&libc::hle_modf));
+    register_adapter("-VVn74ZyhEs", "libc", "difftime", reinterpret_cast<uintptr_t>(&libc::hle_difftime));
+
+    // ---------------------------------------------------------------------
+    // 13. libc String & Memory
+    // ---------------------------------------------------------------------
+    register_adapter("RIa6GnWp+iU", "libc", "strerror", reinterpret_cast<uintptr_t>(&libc::hle_strerror));
+    register_adapter("gjbmYpP-XJQ", "libc", "strcoll", reinterpret_cast<uintptr_t>(&libc::hle_strcoll));
+    register_adapter("q0F6yS-rCms", "libc", "strcspn", reinterpret_cast<uintptr_t>(&libc::hle_strcspn));
+    register_adapter("kDZvoVssCgQ", "libc", "strpbrk", reinterpret_cast<uintptr_t>(&libc::hle_strpbrk));
+    register_adapter("oVkZ8W8-Q8A", "libc", "strtok", reinterpret_cast<uintptr_t>(&libc::hle_strtok));
+    register_adapter("DQbtGaBKlaw", "libc", "strnlen_s", reinterpret_cast<uintptr_t>(&libc::hle_strnlen_s));
+    register_adapter("NFLs+dRJGNg", "libc", "memcpy_s", reinterpret_cast<uintptr_t>(&libc::hle_memcpy_s));
+
+    // ---------------------------------------------------------------------
+    // 14. libc Dinkumware Conversions & Time
+    // ---------------------------------------------------------------------
+    register_adapter("c41UEHVtiEA", "libc", "_Stod", reinterpret_cast<uintptr_t>(&libc::hle_Stod));
+    register_adapter("7pNKcscKrf8", "libc", "_Stoll", reinterpret_cast<uintptr_t>(&libc::hle_Stoll));
+    register_adapter("zlfEH8FmyUA", "libc", "_Stoul", reinterpret_cast<uintptr_t>(&libc::hle_Stoul));
+    register_adapter("q+9E0X3aWpU", "libc", "_Stoull", reinterpret_cast<uintptr_t>(&libc::hle_Stoull));
+    register_adapter("1mecP7RgI2A", "libc", "gmtime", reinterpret_cast<uintptr_t>(&libc::hle_gmtime));
+    register_adapter("efhK-YSUYYQ", "libc", "localtime", reinterpret_cast<uintptr_t>(&libc::hle_localtime));
+    register_adapter("n7AepwR0s34", "libc", "mktime", reinterpret_cast<uintptr_t>(&libc::hle_mktime));
+    register_adapter("lLMT9vJAck0", "libkernel", "clock_gettime", reinterpret_cast<uintptr_t>(&libc::hle_clock_gettime));
+
+    // ---------------------------------------------------------------------
+    // 15. libc Standard I/O
+    // ---------------------------------------------------------------------
+    register_adapter("St9nbxSoezk", "libc", "clearerr", reinterpret_cast<uintptr_t>(&libc::hle_clearerr));
+    register_adapter("LxcEU+ICu8U", "libc", "feof", reinterpret_cast<uintptr_t>(&libc::hle_feof));
+    register_adapter("AHxyhN96dy4", "libc", "ferror", reinterpret_cast<uintptr_t>(&libc::hle_ferror));
+    register_adapter("MUjC4lbHrK4", "libc", "fflush", reinterpret_cast<uintptr_t>(&libc::hle_fflush));
+    register_adapter("KdP-nULpuGw", "libc", "fgets", reinterpret_cast<uintptr_t>(&libc::hle_fgets));
+    register_adapter("aZK8lNei-Qw", "libc", "fputc", reinterpret_cast<uintptr_t>(&libc::hle_fputc));
+    register_adapter("lbB+UlZqVG0", "libc", "fread", reinterpret_cast<uintptr_t>(&libc::hle_fread));
+    register_adapter("gkWgn0p1AfU", "libc", "freopen", reinterpret_cast<uintptr_t>(&libc::hle_freopen));
+    register_adapter("rQFVBXp-Cxg", "libc", "fseek", reinterpret_cast<uintptr_t>(&libc::hle_fseek));
+    register_adapter("Qazy8LmXTvw", "libc", "ftell", reinterpret_cast<uintptr_t>(&libc::hle_ftell));
+    register_adapter("MpxhMh8QFro", "libc", "fwrite", reinterpret_cast<uintptr_t>(&libc::hle_fwrite));
+    register_adapter("8Q60JLJ6Rv4", "libc", "getc", reinterpret_cast<uintptr_t>(&libc::hle_getc));
+    register_adapter("-LFO7jhD5CE", "libc", "ungetc", reinterpret_cast<uintptr_t>(&libc::hle_ungetc));
+    register_adapter("EMutwaQ34Jo", "libc", "perror", reinterpret_cast<uintptr_t>(&libc::hle_perror));
+    register_adapter("MZO7FXyAPU8", "libc", "remove", reinterpret_cast<uintptr_t>(&libc::hle_remove));
+    register_adapter("NN01qLRhiqU", "libkernel", "rename", reinterpret_cast<uintptr_t>(&libc::hle_rename));
+    register_adapter("QMFyLoqNxIg", "libc", "setvbuf", reinterpret_cast<uintptr_t>(&libc::hle_setvbuf));
+    register_adapter("fffwELXNVFA", "libc", "fprintf", reinterpret_cast<uintptr_t>(&libc::hle_fprintf));
+    register_adapter("npLpPTaSuHg", "libc", "fscanf", reinterpret_cast<uintptr_t>(&libc::hle_fscanf));
+
+    // ---------------------------------------------------------------------
+    // 16. C++ Runtime ABI, Exceptions & RTTI
+    // ---------------------------------------------------------------------
+    register_adapter("zr094EQ39Ww", "libc", "__cxa_pure_virtual", reinterpret_cast<uintptr_t>(&libc::hle_cxa_pure_virtual));
+    register_adapter("sqWytnhYdEg", "libc", "_ZNSt8ios_base4InitC1Ev", reinterpret_cast<uintptr_t>(&libc::hle_ios_base_Init_ctor));
+    register_adapter("kxXCvcat1cM", "libc", "_ZNSt8ios_base4InitD1Ev", reinterpret_cast<uintptr_t>(&libc::hle_ios_base_Init_dtor));
+    register_adapter("cfAXurvfl5o", "libc", "__cxa_allocate_exception", reinterpret_cast<uintptr_t>(&libc::hle_cxa_allocate_exception));
+    register_adapter("vkuuLfhnSZI", "libc", "__cxa_throw", reinterpret_cast<uintptr_t>(&libc::hle_cxa_throw));
+    register_adapter("ZL9FV4mJXxo", "libc", "__cxa_rethrow", reinterpret_cast<uintptr_t>(&libc::hle_cxa_rethrow));
+    register_adapter("3cUUypQzMiI", "libc", "__cxa_begin_catch", reinterpret_cast<uintptr_t>(&libc::hle_cxa_begin_catch));
+    register_adapter("lX+4FNUklF0", "libc", "__cxa_end_catch", reinterpret_cast<uintptr_t>(&libc::hle_cxa_end_catch));
+    register_adapter("usKbuvy2hQg", "libc", "__cxa_call_unexpected", reinterpret_cast<uintptr_t>(&libc::hle_cxa_call_unexpected));
+    register_adapter("f1zwJ3jAI2k", "libc", "_Unwind_Resume", reinterpret_cast<uintptr_t>(&libc::hle_Unwind_Resume));
+    register_adapter("XwLA5cTHjt4", "libc", "__gxx_personality_v0", reinterpret_cast<uintptr_t>(&libc::hle_gxx_personality_v0));
+    register_adapter("qYhnoevd9bI", "libc", "_ZSt9terminatev", reinterpret_cast<uintptr_t>(&libc::hle_terminate));
+    register_adapter("NLwJ3q+64bY", "libc", "_ZSt7nothrow", reinterpret_cast<uintptr_t>(&libc::hle_ZSt7nothrow));
+    register_adapter("St4apgcBNfo", "libc", "_ZTIi", reinterpret_cast<uintptr_t>(&libc::hle_ZTIi));
+    register_adapter("byV+FWlAnB4", "libc", "_ZTVN10__cxxabiv117__class_type_infoE", reinterpret_cast<uintptr_t>(&libc::hle_ZTVN10__cxxabiv117__class_type_infoE));
+    register_adapter("pZ9WXcClPO8", "libc", "_ZTVN10__cxxabiv120__si_class_type_infoE", reinterpret_cast<uintptr_t>(&libc::hle_ZTVN10__cxxabiv120__si_class_type_infoE));
+
+    // ---------------------------------------------------------------------
+    // 17. libkernel, libScePosix & libSceSysmodule Helpers
+    // ---------------------------------------------------------------------
+    register_adapter("4wSze92BhLI", "libkernel", "sceKernelWrite", reinterpret_cast<uintptr_t>(&libc::hle_sceKernelWrite));
+    register_adapter("eV9wAD2riIA", "libkernel", "sceKernelStat", reinterpret_cast<uintptr_t>(&libc::hle_sceKernelStat));
+    register_adapter("j2AIqSqJP0w", "libkernel", "sceKernelGetdents", reinterpret_cast<uintptr_t>(&libc::hle_sceKernelGetdents));
+    register_adapter("3kg7rT0NQIs", "libkernel", "scePthreadExit", reinterpret_cast<uintptr_t>(&libc::hle_scePthreadExit));
+    register_adapter("fMP5NHUOaMk", "libkernel", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&libc::hle_sceSysmoduleIsLoaded));
+    register_adapter("fMP5NHUOaMk", "libSceSysmodule", "sceSysmoduleIsLoaded", reinterpret_cast<uintptr_t>(&libc::hle_sceSysmoduleIsLoaded));
+    register_adapter("lLMT9vJAck0", "libScePosix", "clock_gettime", reinterpret_cast<uintptr_t>(&libc::hle_clock_gettime));
+    register_adapter("NN01qLRhiqU", "libScePosix", "rename", reinterpret_cast<uintptr_t>(&libc::hle_rename));
+    register_adapter("wtkt-teR1so", "libScePosix", "pthread_attr_init", reinterpret_cast<uintptr_t>(&pthread::attr_init));
+    register_adapter("vNe1w4diLCs", "libkernel", "__tls_get_addr", reinterpret_cast<uintptr_t>(&libc::hle_tls_get_addr));
+
+    // ---------------------------------------------------------------------
+    // 18. Dinkumware Atomics, Locks, Tables & Standard Data
+    // ---------------------------------------------------------------------
+    register_adapter("iPBqs+YUUFw", "libc", "_Atomic_fetch_add_4", reinterpret_cast<uintptr_t>(&libc::hle_Atomic_fetch_add_4));
+    register_adapter("2HnmKiLmV6s", "libc", "_Atomic_fetch_sub_4", reinterpret_cast<uintptr_t>(&libc::hle_Atomic_fetch_sub_4));
+    register_adapter("kALvdgEv5ME", "libc", "_Locksyslock", reinterpret_cast<uintptr_t>(&libc::hle_Locksyslock));
+    register_adapter("9nf8joUTSaQ", "libc", "_Unlocksyslock", reinterpret_cast<uintptr_t>(&libc::hle_Unlocksyslock));
+    register_adapter("sUP1hBaouOw", "libc", "_Getpctype", reinterpret_cast<uintptr_t>(&libc::hle_Getpctype));
+    register_adapter("1uJgoVq3bQU", "libc", "_Getptolower", reinterpret_cast<uintptr_t>(&libc::hle_Getptolower));
+    register_adapter("p6LrHjIQMdk", "libc", "_ZNSt8_LocinfoD1Ev", reinterpret_cast<uintptr_t>(&libc::hle_Locinfo_dtor));
+    register_adapter("1TDo-ImqkJc", "libc", "__std_stdin", reinterpret_cast<uintptr_t>(&libc::hle_stdin), true);
+    register_adapter("2sWzhYqFH4E", "libc", "__std_stdout", reinterpret_cast<uintptr_t>(&libc::hle_stdout), true);
+    register_adapter("H8AprKeZtNg", "libc", "__std_stderr", reinterpret_cast<uintptr_t>(&libc::hle_stderr), true);
+    register_adapter("P330P3dFF68", "libc", "_P330P3dFF68", reinterpret_cast<uintptr_t>(&libc::hle_P330P3dFF68), true);
+
+    // ---------------------------------------------------------------------
+    // 19. libc Mspace Memory Functions
+    // ---------------------------------------------------------------------
+    register_adapter("-hn1tcVHq5Q", "libc", "sceLibcMspaceCreate", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceCreate));
+    register_adapter("W6SiVSiCDtI", "libc", "sceLibcMspaceDestroy", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceDestroy));
+    register_adapter("OJjm-QOIHlI", "libc", "sceLibcMspaceMalloc", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMalloc));
+    register_adapter("Vla-Z+eXlxo", "libc", "sceLibcMspaceFree", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceFree));
+    register_adapter("gigoVHZvVPE", "libc", "sceLibcMspaceRealloc", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceRealloc));
+    register_adapter("LYo3GhIlB38", "libc", "sceLibcMspaceCalloc", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceCalloc));
+    register_adapter("iF1iQHzxBJU", "libc", "sceLibcMspaceMemalign", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMemalign));
+    register_adapter("qWESlyXMI3E", "libc", "sceLibcMspacePosixMemalign", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspacePosixMemalign));
+    register_adapter("mfHdJTIvhuo", "libc", "sceLibcMspaceMallocStats", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMallocStats));
+    register_adapter("k04jLXu3+Ic", "libc", "sceLibcMspaceMallocStatsFast", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMallocStatsFast));
+    register_adapter("fEoW6BJsPt4", "libc", "sceLibcMspaceMallocUsableSize", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceMallocUsableSize));
+    register_adapter("p6lrRW8-MLY", "libc", "sceLibcMspaceReallocalign", reinterpret_cast<uintptr_t>(&libc::hle_sceLibcMspaceReallocalign));
 }
 
 } // namespace gravity::hle

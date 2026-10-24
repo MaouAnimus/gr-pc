@@ -22,6 +22,13 @@ public:
     NativeTls& operator=(const NativeTls&) = delete;
     static bool supported() noexcept;
     static std::uint32_t slot_offset() noexcept;
+    static void* current_thread_pointer() noexcept {
+        const auto offset = slot_offset();
+        if (!offset) return nullptr;
+        std::uintptr_t value;
+        __asm__ volatile("movq %%gs:(%1), %0" : "=r"(value) : "r"(static_cast<std::uintptr_t>(offset)));
+        return reinterpret_cast<void*>(value);
+    }
     static bool patch_fs_load(std::span<std::uint8_t> instruction) noexcept;
     Status initialize(const TlsImage& image) noexcept;
     Status attach() noexcept;
