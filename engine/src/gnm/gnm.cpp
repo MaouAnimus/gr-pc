@@ -381,6 +381,12 @@ GRAVITY_SYSV_ABI void sceGnmCommitCommands() {
 }
 
 GRAVITY_SYSV_ABI uint32_t sceGnmDrawInitDefaultHardwareState200(uint32_t* cmdbuf, uint32_t size) {
+    {
+        static std::atomic<unsigned> init_calls{};
+        if (init_calls.fetch_add(1) < 2) {
+            std::fprintf(stderr, "[GNM] sceGnmDrawInitDefaultHardwareState200: cmdbuf=%p, size=%u\n", static_cast<void*>(cmdbuf), size);
+        }
+    }
     if (!cmdbuf || size < 256 || !gravity::hle::guest_memory::accessible(cmdbuf, 256 * sizeof(uint32_t), true)) {
         return 0;
     }

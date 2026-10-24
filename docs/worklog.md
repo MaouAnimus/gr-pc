@@ -1,3 +1,27 @@
+## 2026-10-24 — Hito 7: Pipeline de Geometría 3D y Texturas, Descriptores GNM en Tiempo Real y Renderizado de Fotogramas Vulkan
+
+- **Objetivo:** Completar el pipeline gráfico de bajo nivel GNM a Vulkan conectando el procesamiento de paquetes PM4 a shaders SPIR-V compilados con muestreo de texturas directas de memoria de juego, actualización de geometría y presentación activa continua de fotogramas.
+- **Implementación HLE Detallada:**
+  - **Sombreador de Fragmentos con Muestreador de Texturas (`frag.frag` & SPIR-V):**
+    - Actualizado `engine/src/gnm/shaders/frag.frag` incorporando `layout(set = 0, binding = 0) uniform sampler2D texSampler;` y combinando muestreo de textura con modulación de color: `outColor = texture(texSampler, fragTex) * fragCol;`.
+    - Compilado a SPIR-V con `glslc` (MSYS2 Clang64) y regenerado el array estático de bytecode en `engine/src/gnm/spv_arrays.inc`.
+  - **Pipeline Gráfico y Caché de Texturas (`VulkanShaderPipeline`):**
+    - Configurado `VkDescriptorSetLayout` y `VkDescriptorPool` (hasta 128 descriptores `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`).
+    - Creado muestreador de texturas bilineal por defecto (`VkSampler`, `VK_FILTER_LINEAR`, `CLAMP_TO_EDGE`).
+    - Generada textura plana 1x1 blanca host-visible para primitivas sin textura explícita.
+    - Implementado `create_linear_texture` y `get_or_create_texture`: reserva `VkImage` lineal host-visible/coherent, transfiere datos de textura desde la memoria directa de guest (validada con `guest_memory::accessible`), genera `VkImageView` y asigna `VkDescriptorSet`.
+  - **Decodificación de Descriptores GNM / PM4 en Tiempo Real (`get_resolver`):**
+    - Extracción de dirección base de textura y dimensiones desde los registros GCN `0x2C10..0x2C12`: `dw0` (bits 8..39), `dw1` (bits 40..47, formato 20..25), `dw2` (ancho bits 0..13, alto bits 14..27).
+    - Mapeo automático de texturas RGBA8/BGRA8 del juego y enlace en `native.descriptors`.
+    - Actualización dinámica de vértices de quads y colores tintados leídos desde los registros de usuario `0x2C54`.
+    - Actualización dinámica de buffers de índices desde `request.index_address` para llamadas de dibujado indexado.
+    - Adaptación dinámica de Viewport y Scissor a la extensión real del swapchain (`extent.width x extent.height`), eliminando recortes fijos.
+- **Validación y Métricas:**
+  - **90/90 pruebas unitarias aprobadas (100% de éxito)** tanto en **Debug** (4.38s) como en **Release** (3.73s) bajo `-Wall -Wextra -Wpedantic -Werror`.
+  - **Ejecución sostenida (`launcher.exe --boot --timeout=10000`):**
+    - El ejecutable avanza fluidamente y sin fallos, ejecutando y presentando en Vulkan múltiples llamadas de dibujado por fotograma (`[CommandQueue::record PREPARED] prepared_count=2` a 60 FPS estables).
+    - Cero avisos de viewport o fallos de validación en tiempo de ejecución.
+
 ## 2026-10-24 — Hito 6: Desbloqueo Dinámico de Módulos (libSceSysmodule), Control en Vivo (libScePad) y Salida de Audio (libSceAudioOut)
 
 - **Objetivo:** Implementar los subsistemas clave de interacción y comunicación para el progreso del juego tras el arranque:

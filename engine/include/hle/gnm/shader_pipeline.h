@@ -3,7 +3,20 @@
 #include "hle/gnm/command_queue.h"
 #include <vulkan/vulkan.h>
 
+#include <unordered_map>
+
 namespace gravity::hle::gnm {
+
+struct CachedTexture {
+    uint64_t guest_addr{0};
+    uint32_t width{0};
+    uint32_t height{0};
+    uint32_t format{0};
+    VkImage image{VK_NULL_HANDLE};
+    VkDeviceMemory memory{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
+};
 
 class VulkanShaderPipeline {
 public:
@@ -18,15 +31,28 @@ public:
     VkPipeline get_pipeline() const noexcept { return pipeline_; }
     VkPipelineLayout get_layout() const noexcept { return layout_; }
 
+    VkDescriptorSet get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format);
+
 private:
     VulkanShaderPipeline() = default;
     ~VulkanShaderPipeline() { shutdown(); }
 
     VkDevice device_{VK_NULL_HANDLE};
+    VkPhysicalDevice physical_device_{VK_NULL_HANDLE};
     VkPipelineLayout layout_{VK_NULL_HANDLE};
     VkPipeline pipeline_{VK_NULL_HANDLE};
     VkShaderModule vert_module_{VK_NULL_HANDLE};
     VkShaderModule frag_module_{VK_NULL_HANDLE};
+
+    VkDescriptorSetLayout desc_layout_{VK_NULL_HANDLE};
+    VkDescriptorPool desc_pool_{VK_NULL_HANDLE};
+    VkSampler default_sampler_{VK_NULL_HANDLE};
+
+    // Default 1x1 white texture
+    VkImage default_image_{VK_NULL_HANDLE};
+    VkDeviceMemory default_image_memory_{VK_NULL_HANDLE};
+    VkImageView default_image_view_{VK_NULL_HANDLE};
+    VkDescriptorSet default_descriptor_set_{VK_NULL_HANDLE};
 
     VkBuffer vertex_buffer_{VK_NULL_HANDLE};
     VkDeviceMemory vertex_memory_{VK_NULL_HANDLE};
@@ -36,8 +62,11 @@ private:
     VkDeviceMemory index_memory_{VK_NULL_HANDLE};
     VkDeviceSize index_buffer_size_{0};
 
+    std::unordered_map<uint64_t, CachedTexture> texture_cache_{};
+
     bool create_buffer(VkPhysicalDevice phys, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buffer, VkDeviceMemory& memory);
     std::uint32_t find_memory_type(VkPhysicalDevice phys, std::uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    bool create_linear_texture(uint32_t width, uint32_t height, VkFormat format, const void* pixels, CachedTexture& out);
 };
 
 } // namespace gravity::hle::gnm

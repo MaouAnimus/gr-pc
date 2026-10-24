@@ -667,8 +667,8 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutAddFlipEvent(int32_t eq, int3
 }
 
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceVideoOutSubmitFlip(int32_t handle, int32_t bufferIndex, int32_t flipMode, int64_t flipArg) {
-    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutSubmitFlip (buffer=%d, mode=%d, arg=%lld)\n",
-        bufferIndex, flipMode, static_cast<long long>(flipArg)); }
+    { static std::atomic<unsigned> calls{}; if (calls.fetch_add(1) < 4) std::fprintf(stderr, "[Adapter reached] hle_sceVideoOutSubmitFlip (thread=0x%lx, buffer=%d, mode=%d, arg=%lld)\n",
+        static_cast<unsigned long>(GetCurrentThreadId()), bufferIndex, flipMode, static_cast<long long>(flipArg)); }
     uint64_t eq = 0;
     void* udata = nullptr;
     {

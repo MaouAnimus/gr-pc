@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include <cstdio>
 #include <exception>
+#include <atomic>
 
 namespace gravity::hle::gnm {
 namespace {
@@ -26,6 +27,13 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceGnmSubmitCommandBuffers(
     if (!snapshot(reinterpret_cast<std::uintptr_t>(dcb_addresses),addresses.data(),count*sizeof(addresses[0])) ||
         !snapshot(reinterpret_cast<std::uintptr_t>(dcb_sizes),sizes.data(),count*sizeof(sizes[0])))
         return rejected("Cannot read command-buffer metadata");
+    {
+        static std::atomic<unsigned> submit_calls{};
+        if (submit_calls.fetch_add(1) < 5) {
+            std::fprintf(stderr, "[GNM] sceGnmSubmitCommandBuffers: count=%u, dcb=%p, size0=%u (words=%u)\n",
+                         count, static_cast<const void*>(dcb_addresses), sizes[0], sizes[0]/4);
+        }
+    }
     if (ccb_sizes) {
         std::vector<std::uint32_t> constant_sizes(count);
         if (!snapshot(reinterpret_cast<std::uintptr_t>(ccb_sizes),constant_sizes.data(),count*sizeof(constant_sizes[0])))
@@ -66,6 +74,13 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceGnmSubmitAndFlipCommandBuffers(
     uint32_t count, const uint32_t* const* dcb_addresses, const uint32_t* dcb_sizes,
     const uint32_t* const* ccb_addresses, const uint32_t* ccb_sizes,
     uint32_t video_out_handle, uint32_t display_buffer_index, uint32_t flip_mode, int64_t flip_arg) {
+    {
+        static std::atomic<unsigned> submit_flip_calls{};
+        if (submit_flip_calls.fetch_add(1) < 5) {
+            std::fprintf(stderr, "[GNM] sceGnmSubmitAndFlipCommandBuffers: count=%u, handle=%u, buf=%u, mode=%u\n",
+                         count, video_out_handle, display_buffer_index, flip_mode);
+        }
+    }
     (void)video_out_handle;
     (void)display_buffer_index;
     (void)flip_mode;

@@ -1,8 +1,11 @@
 #include "hle/gnm/command_queue.h"
+#include "hle/guest_memory.h"
 #include <type_traits>
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <atomic>
 
 namespace gravity::hle::gnm {
 namespace {
@@ -36,6 +39,13 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
     std::lock_guard lock(mutex_);
     if (recording_.id) return diagnostic_=error(pm4::Error::busy,"Previous Vulkan recording is unacknowledged");
     if (batches_.empty()) return diagnostic_={};
+    {
+        static std::atomic<unsigned> rec_calls{};
+        if (rec_calls.fetch_add(1) < 5) {
+            std::fprintf(stderr, "[CommandQueue::record] batches=%zu, first_batch_cmds=%zu\n",
+                         batches_.size(), batches_.front().decoded.commands.size());
+        }
+    }
     if (!cmd || !extent.width || !extent.height)
         return diagnostic_=error(pm4::Error::state,"Recording needs an active Vulkan command buffer and extent");
     auto staged=std::make_shared<GraphicsState>(*state_);
@@ -67,6 +77,14 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
                         }
                     }
                     if (!request.count || !request.instances) return;
+                    {
+                        static std::atomic<unsigned> draw_calls{};
+                        if (draw_calls.fetch_add(1) < 4) {
+                            std::fprintf(stderr, "[CommandQueue::record DRAW] count=%u, instances=%u, indexed=%d, index_addr=0x%llx\n",
+                                         request.count, request.instances, static_cast<int>(request.indexed),
+                                         static_cast<unsigned long long>(request.index_address));
+                        }
+                    }
                     NativeDraw native;
                     if (!resolver_ || !resolver_(*staged,request,native) || !native.pipeline) {
                         status=failure(pm4::Error::resources,"Draw has no native pipeline/resources for its register state"); return;
@@ -112,6 +130,12 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
         }
     }
     // All validation is complete. No Vulkan command is emitted on preflight failure.
+    if (!prepared.empty()) {
+        static std::atomic<unsigned> prep_calls{};
+        if (prep_calls.fetch_add(1) < 10) {
+            std::fprintf(stderr, "[CommandQueue::record PREPARED] prepared_count=%zu\n", prepared.size());
+        }
+    }
     for(const auto& draw:prepared) {
         const auto& n=draw.native; const auto& r=draw.request;
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,n.pipeline);

@@ -1,7 +1,10 @@
 #include "hle/gnm/shader_pipeline.h"
+#include "hle/guest_memory.h"
 #include <array>
 #include <vector>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 #include <iostream>
 
 namespace gravity::hle::gnm {
@@ -9,6 +12,19 @@ namespace gravity::hle::gnm {
 namespace {
 
 #include "spv_arrays.inc"
+
+struct DefaultVertex {
+    float x, y, z;
+    float u, v;
+    float r, g, b, a;
+};
+
+const DefaultVertex kDefaultQuad[4] = {
+    { -1.0f, -1.0f, 0.0f,  0.0f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f },
+    {  1.0f, -1.0f, 0.0f,  1.0f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f },
+    { -1.0f,  1.0f, 0.0f,  0.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f },
+    {  1.0f,  1.0f, 0.0f,  1.0f, 1.0f,  1.0f, 1.0f, 1.0f, 1.0f }
+};
 
 } // anonymous namespace
 
@@ -61,10 +77,142 @@ bool VulkanShaderPipeline::create_buffer(VkPhysicalDevice phys, VkDeviceSize siz
     return true;
 }
 
+bool VulkanShaderPipeline::create_linear_texture(uint32_t width, uint32_t height, VkFormat format,
+                                                const void* pixels, CachedTexture& out) {
+    if (!device_ || !physical_device_ || !desc_pool_ || !default_sampler_ || !width || !height) return false;
+
+    VkImageCreateInfo img_ci{};
+    img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    img_ci.imageType = VK_IMAGE_TYPE_2D;
+    img_ci.format = format;
+    img_ci.extent = { width, height, 1 };
+    img_ci.mipLevels = 1;
+    img_ci.arrayLayers = 1;
+    img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_ci.tiling = VK_IMAGE_TILING_LINEAR;
+    img_ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    img_ci.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+
+    if (vkCreateImage(device_, &img_ci, nullptr, &out.image) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(device_, out.image, &req);
+
+    VkMemoryAllocateInfo alloc_ci{};
+    alloc_ci.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_ci.allocationSize = req.size;
+    alloc_ci.memoryTypeIndex = find_memory_type(physical_device_, req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(device_, &alloc_ci, nullptr, &out.memory) != VK_SUCCESS) {
+        vkDestroyImage(device_, out.image, nullptr);
+        out.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    if (vkBindImageMemory(device_, out.image, out.memory, 0) != VK_SUCCESS) {
+        vkFreeMemory(device_, out.memory, nullptr);
+        vkDestroyImage(device_, out.image, nullptr);
+        out.memory = VK_NULL_HANDLE;
+        out.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    const size_t byte_count = static_cast<size_t>(width) * height * 4;
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, out.memory, 0, (std::min)(req.size, static_cast<VkDeviceSize>(byte_count)), 0, &mapped) == VK_SUCCESS) {
+        if (pixels) {
+            std::memcpy(mapped, pixels, (std::min)(req.size, static_cast<VkDeviceSize>(byte_count)));
+        } else {
+            std::memset(mapped, 0xFF, (std::min)(req.size, static_cast<VkDeviceSize>(byte_count)));
+        }
+        vkUnmapMemory(device_, out.memory);
+    }
+
+    VkImageViewCreateInfo view_ci{};
+    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_ci.image = out.image;
+    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_ci.format = format;
+    view_ci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+    if (vkCreateImageView(device_, &view_ci, nullptr, &out.view) != VK_SUCCESS) {
+        vkFreeMemory(device_, out.memory, nullptr);
+        vkDestroyImage(device_, out.image, nullptr);
+        out.memory = VK_NULL_HANDLE;
+        out.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo ds_ai{};
+    ds_ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ds_ai.descriptorPool = desc_pool_;
+    ds_ai.descriptorSetCount = 1;
+    ds_ai.pSetLayouts = &desc_layout_;
+
+    if (vkAllocateDescriptorSets(device_, &ds_ai, &out.descriptor_set) != VK_SUCCESS) {
+        vkDestroyImageView(device_, out.view, nullptr);
+        vkFreeMemory(device_, out.memory, nullptr);
+        vkDestroyImage(device_, out.image, nullptr);
+        out.view = VK_NULL_HANDLE;
+        out.memory = VK_NULL_HANDLE;
+        out.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkDescriptorImageInfo image_info{};
+    image_info.sampler = default_sampler_;
+    image_info.imageView = out.view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = out.descriptor_set;
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo = &image_info;
+
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+
+    out.width = width;
+    out.height = height;
+    return true;
+}
+
+VkDescriptorSet VulkanShaderPipeline::get_or_create_texture(uint64_t guest_addr, uint32_t width, uint32_t height, uint32_t format) {
+    if (!guest_addr || !width || !height) return default_descriptor_set_;
+
+    auto it = texture_cache_.find(guest_addr);
+    if (it != texture_cache_.end()) {
+        return it->second.descriptor_set;
+    }
+
+    const size_t byte_count = static_cast<size_t>(width) * height * 4;
+    if (!guest_memory::accessible(reinterpret_cast<const void*>(guest_addr), byte_count, false)) {
+        return default_descriptor_set_;
+    }
+
+    CachedTexture tex{};
+    tex.guest_addr = guest_addr;
+    tex.format = format;
+    VkFormat vk_fmt = VK_FORMAT_R8G8B8A8_UNORM;
+
+    if (!create_linear_texture(width, height, vk_fmt, reinterpret_cast<const void*>(guest_addr), tex)) {
+        return default_descriptor_set_;
+    }
+
+    VkDescriptorSet ds = tex.descriptor_set;
+    texture_cache_.emplace(guest_addr, std::move(tex));
+    return ds;
+}
+
 bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat colorFormat) {
     if (device == VK_NULL_HANDLE) return false;
     shutdown();
     device_ = device;
+    physical_device_ = physicalDevice;
 
     // 1. Create Vertex Shader Module
     VkShaderModuleCreateInfo vert_ci{};
@@ -86,20 +234,78 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
         return false;
     }
 
-    // 3. Create Pipeline Layout
+    // 3. Create Descriptor Set Layout
+    VkDescriptorSetLayoutBinding dsl_binding{};
+    dsl_binding.binding = 0;
+    dsl_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    dsl_binding.descriptorCount = 1;
+    dsl_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dsl_ci{};
+    dsl_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dsl_ci.bindingCount = 1;
+    dsl_ci.pBindings = &dsl_binding;
+    if (vkCreateDescriptorSetLayout(device_, &dsl_ci, nullptr, &desc_layout_) != VK_SUCCESS) {
+        shutdown();
+        return false;
+    }
+
+    // 4. Create Descriptor Pool
+    VkDescriptorPoolSize pool_size{};
+    pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pool_size.descriptorCount = 128;
+
+    VkDescriptorPoolCreateInfo pool_ci{};
+    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.poolSizeCount = 1;
+    pool_ci.pPoolSizes = &pool_size;
+    pool_ci.maxSets = 128;
+    if (vkCreateDescriptorPool(device_, &pool_ci, nullptr, &desc_pool_) != VK_SUCCESS) {
+        shutdown();
+        return false;
+    }
+
+    // 5. Create Default Sampler
+    VkSamplerCreateInfo sampler_ci{};
+    sampler_ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_ci.magFilter = VK_FILTER_LINEAR;
+    sampler_ci.minFilter = VK_FILTER_LINEAR;
+    sampler_ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.maxAnisotropy = 1.0f;
+    if (vkCreateSampler(device_, &sampler_ci, nullptr, &default_sampler_) != VK_SUCCESS) {
+        shutdown();
+        return false;
+    }
+
+    // 6. Create Default 1x1 White Texture
+    CachedTexture white_tex{};
+    const uint32_t white_pixel = 0xFFFFFFFF;
+    if (!create_linear_texture(1, 1, VK_FORMAT_R8G8B8A8_UNORM, &white_pixel, white_tex)) {
+        shutdown();
+        return false;
+    }
+    default_image_ = white_tex.image;
+    default_image_memory_ = white_tex.memory;
+    default_image_view_ = white_tex.view;
+    default_descriptor_set_ = white_tex.descriptor_set;
+
+    // 7. Create Pipeline Layout
     VkPipelineLayoutCreateInfo layout_ci{};
     layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_ci.setLayoutCount = 0;
-    layout_ci.pSetLayouts = nullptr;
+    layout_ci.setLayoutCount = 1;
+    layout_ci.pSetLayouts = &desc_layout_;
     layout_ci.pushConstantRangeCount = 0;
     if (vkCreatePipelineLayout(device_, &layout_ci, nullptr, &layout_) != VK_SUCCESS) {
         shutdown();
         return false;
     }
 
-    // 4. Create Buffers (64KB default scratch vertex & index buffers)
-    vertex_buffer_size_ = 65536;
-    index_buffer_size_ = 65536;
+    // 8. Create Buffers (256KB default scratch vertex & index buffers)
+    vertex_buffer_size_ = 262144;
+    index_buffer_size_ = 262144;
     if (!create_buffer(physicalDevice, vertex_buffer_size_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                        vertex_buffer_, vertex_memory_)) {
@@ -114,7 +320,14 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
         return false;
     }
 
-    // 5. Build Graphics Pipeline with Dynamic Rendering
+    // Initialize vertex buffer with standard quad
+    void* vmapped = nullptr;
+    if (vkMapMemory(device_, vertex_memory_, 0, sizeof(kDefaultQuad), 0, &vmapped) == VK_SUCCESS) {
+        std::memcpy(vmapped, kDefaultQuad, sizeof(kDefaultQuad));
+        vkUnmapMemory(device_, vertex_memory_);
+    }
+
+    // 9. Build Graphics Pipeline with Dynamic Rendering
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -157,7 +370,7 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
 
     VkPipelineInputAssemblyStateCreateInfo ia{};
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     ia.primitiveRestartEnable = VK_FALSE;
 
     VkPipelineViewportStateCreateInfo vp{};
@@ -184,7 +397,13 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
     VkPipelineColorBlendAttachmentState cb_attach{};
     cb_attach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    cb_attach.blendEnable = VK_FALSE;
+    cb_attach.blendEnable = VK_TRUE;
+    cb_attach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cb_attach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cb_attach.colorBlendOp = VK_BLEND_OP_ADD;
+    cb_attach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cb_attach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    cb_attach.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo cb{};
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -230,6 +449,38 @@ bool VulkanShaderPipeline::initialize(VkDevice device, VkPhysicalDevice physical
 
 void VulkanShaderPipeline::shutdown() {
     if (device_ != VK_NULL_HANDLE) {
+        for (auto& [addr, tex] : texture_cache_) {
+            (void)addr;
+            if (tex.view != VK_NULL_HANDLE) vkDestroyImageView(device_, tex.view, nullptr);
+            if (tex.image != VK_NULL_HANDLE) vkDestroyImage(device_, tex.image, nullptr);
+            if (tex.memory != VK_NULL_HANDLE) vkFreeMemory(device_, tex.memory, nullptr);
+        }
+        texture_cache_.clear();
+
+        if (default_image_view_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, default_image_view_, nullptr);
+            default_image_view_ = VK_NULL_HANDLE;
+        }
+        if (default_image_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, default_image_, nullptr);
+            default_image_ = VK_NULL_HANDLE;
+        }
+        if (default_image_memory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, default_image_memory_, nullptr);
+            default_image_memory_ = VK_NULL_HANDLE;
+        }
+        if (default_sampler_ != VK_NULL_HANDLE) {
+            vkDestroySampler(device_, default_sampler_, nullptr);
+            default_sampler_ = VK_NULL_HANDLE;
+        }
+        if (desc_pool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device_, desc_pool_, nullptr);
+            desc_pool_ = VK_NULL_HANDLE;
+        }
+        if (desc_layout_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device_, desc_layout_, nullptr);
+            desc_layout_ = VK_NULL_HANDLE;
+        }
         if (pipeline_ != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, pipeline_, nullptr);
             pipeline_ = VK_NULL_HANDLE;
@@ -263,6 +514,7 @@ void VulkanShaderPipeline::shutdown() {
             index_memory_ = VK_NULL_HANDLE;
         }
         device_ = VK_NULL_HANDLE;
+        physical_device_ = VK_NULL_HANDLE;
     }
 }
 
@@ -272,19 +524,78 @@ bool VulkanShaderPipeline::is_ready() const noexcept {
 
 DrawResolver VulkanShaderPipeline::get_resolver() {
     return [this](const GraphicsState& state, const DrawRequest& request, NativeDraw& native) -> bool {
-        (void)state;
         if (!pipeline_ || !layout_) return false;
 
         native.pipeline = pipeline_;
         native.layout = layout_;
+
+        // 1. Texture resolution from SPI_SHADER_USER_DATA_PS (e.g. 0x2C10)
+        uint64_t tex_addr = 0;
+        uint32_t tex_w = 0, tex_h = 0, tex_fmt = 0;
+        const uint32_t dw0 = state.registers[0x2c10];
+        const uint32_t dw1 = state.registers[0x2c11];
+        const uint32_t dw2 = state.registers[0x2c12];
+        if (dw0 != 0 && dw2 != 0) {
+            tex_addr = (static_cast<uint64_t>(dw0) << 8) | (static_cast<uint64_t>(dw1 & 0xFF) << 40);
+            tex_w = (dw2 & 0x3FFF) + 1;
+            tex_h = ((dw2 >> 14) & 0x3FFF) + 1;
+            tex_fmt = (dw1 >> 20) & 0x3F;
+        }
+
+        VkDescriptorSet ds = default_descriptor_set_;
+        if (tex_addr != 0 && tex_w > 0 && tex_h > 0) {
+            ds = get_or_create_texture(tex_addr, tex_w, tex_h, tex_fmt);
+        }
+        if (ds != VK_NULL_HANDLE) {
+            native.descriptors = { ds };
+        }
+
+        // 2. Vertex Buffer binding
         native.vertex_buffers = { vertex_buffer_ };
         native.vertex_offsets = { 0 };
 
+        // 3. Dynamic Quad/Color updating
+        if (!request.indexed && request.count == 4) {
+            float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
+            const uint64_t color_ptr = state.registers[0x2c54];
+            if (color_ptr && guest_memory::accessible(reinterpret_cast<const void*>(color_ptr), 16, false)) {
+                const float* col_f = reinterpret_cast<const float*>(color_ptr);
+                r = col_f[0]; g = col_f[1]; b = col_f[2]; a = col_f[3];
+            }
+            const DefaultVertex quad[4] = {
+                { -1.0f, -1.0f, 0.0f,  0.0f, 0.0f,  r, g, b, a },
+                {  1.0f, -1.0f, 0.0f,  1.0f, 0.0f,  r, g, b, a },
+                { -1.0f,  1.0f, 0.0f,  0.0f, 1.0f,  r, g, b, a },
+                {  1.0f,  1.0f, 0.0f,  1.0f, 1.0f,  r, g, b, a }
+            };
+            void* mapped = nullptr;
+            if (vkMapMemory(device_, vertex_memory_, 0, sizeof(quad), 0, &mapped) == VK_SUCCESS) {
+                std::memcpy(mapped, quad, sizeof(quad));
+                vkUnmapMemory(device_, vertex_memory_);
+            }
+        }
+
+        // 4. Index Buffer resolution
         if (request.indexed) {
+            const auto elem_size = request.index32 ? 4U : 2U;
+            const auto req_bytes = static_cast<VkDeviceSize>(request.first_index + request.count) * elem_size;
+            if (request.index_address && guest_memory::accessible(reinterpret_cast<const void*>(request.index_address), req_bytes, false)) {
+                void* mapped = nullptr;
+                if (vkMapMemory(device_, index_memory_, 0, (std::min)(req_bytes, index_buffer_size_), 0, &mapped) == VK_SUCCESS) {
+                    std::memcpy(mapped, reinterpret_cast<const void*>(request.index_address), (std::min)(req_bytes, index_buffer_size_));
+                    vkUnmapMemory(device_, index_memory_);
+                }
+            }
             native.index_buffer = index_buffer_;
             native.index_offset = 0;
             native.index_bytes = index_buffer_size_;
         }
+
+        // 5. Dynamic Viewport / Scissor: let CommandQueue default to active target extent
+        // unless a sub-rect scissor/viewport is specifically required within bounds.
+        native.viewport = std::nullopt;
+        native.scissor = std::nullopt;
+
         return true;
     };
 }
