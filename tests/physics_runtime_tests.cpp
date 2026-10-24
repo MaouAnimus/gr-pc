@@ -191,6 +191,28 @@ void invalid() {
         return {};
     };
     CHECK(driver.advance(20ms, reenter, &driver).status);
+    CHECK(driver.reset());
+    std::array<std::atomic<bool>, 2> gate{};
+    auto blocking = [](void* p, const FixedTick&) -> Status {
+        auto& flags = *static_cast<std::array<std::atomic<bool>, 2>*>(p);
+        flags[0] = true;
+        while (!flags[1]) std::this_thread::yield();
+        return {};
+    };
+    std::thread owner([&] { CHECK(driver.advance(20ms, blocking, &gate).status); });
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (!gate[0]) { CHECK(std::chrono::steady_clock::now() < deadline); std::this_thread::yield(); }
+    CHECK(driver.advance(20ms, record, &timeline).status.error == Error::busy);
+    CHECK(driver.reset().error == Error::busy);
+    gate[1] = true; owner.join();
+    CHECK(driver.reset());
+    auto fails = [](void*, const FixedTick&) -> Status { return {Error::system_error, 42}; };
+    const auto failed = driver.advance(20ms, fails, nullptr);
+    CHECK(failed.status.error == Error::system_error && failed.status.native_error == 42 && failed.completed == 0);
+    CHECK(driver.advance(0ns, record, &timeline).status.error == Error::invalid_state);
+    CHECK(driver.reset());
+    CHECK(driver.advance(16666666ns, record, &timeline).completed == 0);
+    CHECK(driver.advance(1ns, record, &timeline).completed == 1);
 }
 }
 int main(int argc, char** argv) {

@@ -60,3 +60,5 @@ Ver el [plan completo del port nativo](docs/PLAN_PORT_NATIVO_PC.md), la [estabil
 El [informe del decodificador PM4 y la cola Vulkan](docs/LOTE_2_PM4_VULKAN.md) detalla el subconjunto soportado, las pruebas y los límites actuales.
 
 El [conector AvPlayer con Media Foundation](docs/AVPLAYER_MEDIA_FOUNDATION.md) decodifica H.264 y PCM, entrega vídeo temporizado a texturas Vulkan y documenta las pruebas con MP4 reales del juego a 1080p60 y los límites de integración pendientes.
+
+La [base de físicas y gravedad 360°](docs/PHYSICS_GRAVITY_60HZ.md) corrige relojes y sincronización guest e incorpora paso fijo de 60 Hz y CCD de esfera contra triángulos. Su conexión al mundo Havok del juego sigue pendiente y se distingue de las pruebas nativas.

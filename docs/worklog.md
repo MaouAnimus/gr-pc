@@ -1,3 +1,35 @@
+## 2026-10-24 — Paso 4: Físicas Havok, Sincronización Gravitacional 360°, Event Flags y Temporización de 60 Hz
+
+- **Objetivo:** Implementar y verificar los componentes críticos de sincronización y físicas para la jugabilidad: Event Flags del kernel de Sony (`libkernel`), temporización fija a 60 Hz (`FramePacer` y `FixedStepDriver`), sincronización de relojes TSC e instrucciones `rdtsc` invitadas, y simulación cinemática gravitacional 360° con detección continua de colisiones (CCD) anti-tunneling.
+
+- **Implementación HLE Detallada:**
+  - **Event Flags de Sony Orbis (`engine/src/kernel/event_flag.cpp`, `engine/include/hle/kernel/event_flag.h`):**
+    - Implementación completa de las 8 APIs de EventFlags importadas por `eboot.bin` registradas en `AdapterRegistry`:
+      - `sceKernelCreateEventFlag`, `sceKernelDeleteEventFlag`, `sceKernelCloseEventFlag`.
+      - `sceKernelSetEventFlag`, `sceKernelClearEventFlag`.
+      - `sceKernelWaitEventFlag`, `sceKernelPollEventFlag`, `sceKernelCancelEventFlag`.
+    - Modos de espera: `wait_all` (AND), `wait_any` (OR), con limpieza automática `clear_all` o `clear_pattern`.
+    - Colas de hilos de espera (`fifo`, `priority`, `single`, `multi`), cancelación atómica con retorno de patrones y tiempos de expiración exactos en microsegundos.
+  - **Temporización y Frame Pacing 60 Hz (`engine/src/timing.cpp`, `engine/include/hle/timing.h`):**
+    - Sincronización estricta de relojes TSC con el host (`sceKernelReadTsc`, `sceKernelGetTscFrequency`, `rdtsc` inline de Havok).
+    - `FramePacer` racional de 60 Hz con plazos absolutos de 16.666.666 ns por fotograma, desacoplando la cadencia de presentación de la simulación y evitando ráfagas de fotogramas caducados tras pausas o caídas de frame.
+  - **Controlador de Paso Fijo Fixed-Step (`engine/src/physics/fixed_step.cpp`, `engine/include/hle/physics/fixed_step.h`):**
+    - `FixedStepDriver` determinista que acumula tiempo transcurrido y ejecuta pasos de integración de física con `dt = 1/60s` constante.
+    - Presupuesto de recuperación (`max_catchup = 8`) para garantizar estabilidad numérica sin espirales de la muerte de la CPU.
+    - Aislamiento de excepciones en los callbacks de trabajo de la simulación.
+  - **Cinemática Gravitacional y Colisión Continua 360° (`engine/src/physics/gravity_motion.cpp`, `engine/include/hle/physics/gravity_motion.h`):**
+    - Controlador de esfera de Kat (`step_sphere_60hz`) que soporta gravedad arbitraria en 360° en el espacio mundial (sin asumir un vector "arriba" fijo).
+    - Detección de colisión continua (CCD) de barrido analítico contra mallas estáticas de triángulos (caras, aristas y vértices), asegurando cero efecto de *tunneling* a velocidades ultra-altas (verificado a 3.000 m/s y 1.000.000 m/s).
+    - Respuesta de contacto sin fricción ni restitución para deslizamiento suave sobre cualquier superficie de Hekseville.
+  - **Evidencia y Análisis de Havok (`docs/HAVOK_GUEST_EVIDENCE.md`):**
+    - Documentación de las 776 instrucciones `rdtsc` del volcado, monitorización `TtPhysics 2012` y `TtWaitForWorkerThreads`, vtables y colisiones continuas `hkpContinuousSimulation`.
+
+- **Validación y Métricas:**
+  - **19 pruebas dedicadas aprobadas al 100%** dentro de la suite global de 123 pruebas:
+    - 6 pruebas en `gravity_motion_*`: `free_fall`, `tunneling`, `orientation`, `sliding`, `features`, `invalid`.
+    - 6 pruebas en `physics_runtime_*`: `clocks`, `deadlines`, `fixed`, `jobs`, `cadence`, `invalid`.
+    - 7 pruebas en `event_flag_*`: `lifecycle`, `bits`, `wait`, `cancel`, `concurrent`, `invalid`, `registry`.
+
 ## 2026-10-24 — Paso 3: Motor de Audio en Tiempo Real (libSceNgs2 + libSceAudio3d + WASAPI)
 
 - **Objetivo:** Implementar la síntesis y mezcla de audio multicanal en tiempo real (`libSceNgs2`), el posicionamiento espacial tridimensional con atenuación por distancia y paneo azimutal constante (`libSceAudio3d`), y la reproducción en vivo en el hardware de sonido del PC vía WASAPI a 48 kHz estéreo.
