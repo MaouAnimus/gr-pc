@@ -102,5 +102,12 @@ FramePacer::Clock::time_point FramePacer::deadline_after(Clock::time_point now) 
     if (deadline <= now) deadline = origin_ + tick_offset(next_tick_++);
     return deadline;
 }
-void FramePacer::wait() noexcept { sleep_until(deadline_after(Clock::now())); }
+void FramePacer::wait() noexcept {
+    static std::atomic<unsigned> pacer_calls{0};
+    if (pacer_calls.fetch_add(1) < 10) {
+        std::fprintf(stderr, "[Timing] FramePacer::wait() call %u tid=0x%lx caller=%p\n",
+                     pacer_calls.load(), static_cast<unsigned long>(GetCurrentThreadId()), __builtin_return_address(0));
+    }
+    sleep_until(deadline_after(Clock::now()));
+}
 }

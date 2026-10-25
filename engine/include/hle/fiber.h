@@ -33,8 +33,12 @@ public:
     Fiber(const Fiber&) = delete;
     Fiber& operator=(const Fiber&) = delete;
 
-    Status initialize(FiberScheduler& scheduler, FiberEntry entry,
+    Status initialize(FiberScheduler* scheduler, FiberEntry entry,
                       std::uint64_t initialize_arg, FiberOptions options = {}) noexcept;
+    Status initialize(FiberScheduler& scheduler, FiberEntry entry,
+                      std::uint64_t initialize_arg, FiberOptions options = {}) noexcept {
+        return initialize(&scheduler, entry, initialize_arg, options);
+    }
     Status finalize() noexcept;
 
     [[nodiscard]] FiberState state() const noexcept { return state_; }

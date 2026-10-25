@@ -129,6 +129,13 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
             if (!status) return diagnostic_=status;
         }
     }
+    // Allocate the ownership aggregate before emitting any Vulkan commands.
+    // Locals clean up preflight failures; a ticket retains a successful recording
+    // through submission, independent of acknowledge() removing queue batches.
+    auto resources=std::make_shared<std::vector<std::shared_ptr<void>>>();
+    resources->reserve(prepared.size());
+    for (const auto& draw:prepared) if (draw.native.resources)
+        resources->push_back(draw.native.resources);
     // All validation is complete. No Vulkan command is emitted on preflight failure.
     if (!prepared.empty()) {
         static std::atomic<unsigned> prep_calls{};
@@ -157,8 +164,8 @@ pm4::Diagnostic CommandQueue::record(VkCommandBuffer cmd,VkExtent2D extent,Recor
             vkCmdDrawIndexed(cmd,r.count,r.instances,r.first_index,n.vertex_offset,n.first_instance);
         } else vkCmdDraw(cmd,r.count,r.instances,n.first_vertex,n.first_instance);
     }
-    recording_={next_ticket_++,batches_.size(),prepared.size(),std::move(staged)};
-    ticket={recording_.id,this};
+    recording_={next_ticket_++,batches_.size(),prepared.size(),std::move(staged),resources};
+    ticket={recording_.id,this,std::move(resources)};
     diagnostic_={}; return {};
     } catch (...) {
         // A resolver/allocation failure occurs during preflight, before emit.

@@ -89,21 +89,40 @@ void PsarcArchive::close() noexcept {
 }
 
 std::string PsarcArchive::normalize_path(std::string_view path) {
-    std::string s;
-    s.reserve(path.size());
-
-    // Strip leading /app0/ or /
+    // Strip leading /app0/ or app0/
     if (path.starts_with("/app0/")) {
         path.remove_prefix(6);
     } else if (path.starts_with("app0/")) {
         path.remove_prefix(5);
-    } else if (path.starts_with("/")) {
+    }
+
+    // Strip any leading slashes
+    while (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
         path.remove_prefix(1);
     }
 
+    // Check for arc<N>/ prefix where N is one or more digits (e.g. arc0/, arc1/)
+    if (path.starts_with("arc") || path.starts_with("ARC")) {
+        std::size_t i = 3;
+        while (i < path.size() && (path[i] >= '0' && path[i] <= '9')) {
+            ++i;
+        }
+        if (i > 3 && i < path.size() && (path[i] == '/' || path[i] == '\\')) {
+            path.remove_prefix(i + 1);
+            while (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
+                path.remove_prefix(1);
+            }
+        }
+    }
+
+    std::string s;
+    s.reserve(path.size());
+
     for (char c : path) {
-        if (c == '\\') {
-            s.push_back('/');
+        if (c == '\\' || c == '/') {
+            if (!s.empty() && s.back() != '/') {
+                s.push_back('/');
+            }
         } else {
             s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
         }
@@ -237,9 +256,23 @@ bool PsarcArchive::has_file(std::string_view path) const noexcept {
 }
 
 const PsarcFileEntry* PsarcArchive::get_entry(std::string_view path) const noexcept {
-    auto it = path_to_index_.find(normalize_path(path));
+    const std::string norm = normalize_path(path);
+    auto it = path_to_index_.find(norm);
     if (it != path_to_index_.end()) {
         return &entries_[it->second];
+    }
+    if (!norm.starts_with("lua/")) {
+        std::string lua_norm = "lua/";
+        lua_norm += norm;
+        it = path_to_index_.find(lua_norm);
+        if (it != path_to_index_.end()) {
+            return &entries_[it->second];
+        }
+    } else {
+        it = path_to_index_.find(norm.substr(4));
+        if (it != path_to_index_.end()) {
+            return &entries_[it->second];
+        }
     }
     return nullptr;
 }

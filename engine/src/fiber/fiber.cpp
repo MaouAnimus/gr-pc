@@ -97,6 +97,7 @@ static uint64_t g_tls_total_size = 0;
 static DWORD g_tls_slot = TLS_OUT_OF_INDEXES;
 static std::once_flag g_tls_slot_once;
 
+static thread_local FiberScheduler s_thread_scheduler;
 static thread_local FiberScheduler* s_current_scheduler = nullptr;
 
 extern "C" GRAVITY_SYSV_ABI void
@@ -131,7 +132,18 @@ sceFiberGetTlsSlot() {
 // -------------------------------------------------------------------------
 
 FiberScheduler* FiberScheduler::for_thread() noexcept {
-    return s_current_scheduler;
+    if (s_current_scheduler) {
+        return s_current_scheduler;
+    }
+    if (!s_thread_scheduler.attached()) {
+        const auto status = s_thread_scheduler.attach();
+        if (!status) {
+            std::fprintf(stderr, "[Fiber] Auto-attach scheduler failed: %s (native=%u)\n",
+                         error_name(status.error), status.native_error);
+            return nullptr;
+        }
+    }
+    return &s_thread_scheduler;
 }
 
 Status FiberScheduler::check_thread() const noexcept {
@@ -142,7 +154,7 @@ Status FiberScheduler::check_thread() const noexcept {
 }
 
 Status FiberScheduler::attach() noexcept {
-    if (attached_ || for_thread() != nullptr) {
+    if (attached_ || s_current_scheduler != nullptr) {
         return {Error::invalid_state};
     }
     if (IsThreadAFiber()) {
@@ -179,15 +191,14 @@ Status FiberScheduler::detach() noexcept {
     root_fiber_ = nullptr;
     thread_id_ = 0;
     attached_ = false;
-    s_current_scheduler = nullptr;
+    if (s_current_scheduler == this) {
+        s_current_scheduler = nullptr;
+    }
     return {};
 }
 
 FiberScheduler::~FiberScheduler() {
     if (attached_) {
-        if (live_fibers_ > 0 || current_ != nullptr) {
-            std::terminate();
-        }
         (void)detach();
     }
 }
@@ -207,10 +218,8 @@ Status FiberScheduler::run(Fiber& target, std::uint64_t argument, std::uint64_t&
     if (target.state_ != FiberState::ready && target.state_ != FiberState::suspended) {
         return {Error::invalid_state};
     }
-    if (target.scheduler_ != this) {
-        return {Error::invalid_argument};
-    }
 
+    target.scheduler_ = this;
     target.incoming_ = argument;
     target.state_ = FiberState::running;
     current_ = &target;
@@ -241,10 +250,8 @@ Status FiberScheduler::switch_to(Fiber& target, std::uint64_t argument, std::uin
     if (target.state_ != FiberState::ready && target.state_ != FiberState::suspended) {
         return {Error::invalid_state};
     }
-    if (target.scheduler_ != this) {
-        return {Error::invalid_argument};
-    }
 
+    target.scheduler_ = this;
     Fiber* prev = current_;
     prev->state_ = FiberState::suspended;
 
@@ -301,37 +308,40 @@ void WINAPI Fiber::trampoline(void* parameter) noexcept {
     try {
         entry(initial, incoming);
         fiber->state_ = FiberState::completed;
-        scheduler->return_value_ = 0;
+        if (scheduler) {
+            scheduler->return_value_ = 0;
+        }
     } catch (...) {
         fiber->exception_ = std::current_exception();
         fiber->state_ = FiberState::completed;
-        scheduler->return_value_ = 0;
+        if (scheduler) {
+            scheduler->return_value_ = 0;
+        }
     }
 
     DWORD slot = sceFiberGetTlsSlot();
     if (slot != TLS_OUT_OF_INDEXES) {
         TlsSetValue(slot, nullptr);
     }
-    scheduler->current_ = nullptr;
-    SwitchToFiber(scheduler->root_fiber_);
+    if (scheduler) {
+        scheduler->current_ = nullptr;
+        SwitchToFiber(scheduler->root_fiber_);
+    }
 }
 
 Fiber::~Fiber() {
-    if (state_ == FiberState::running || state_ == FiberState::suspended) {
-        std::terminate();
-    }
     if (handle_) {
-        if (!finalize()) {
-            std::terminate();
-        }
+        (void)finalize();
     }
 }
 
-Status Fiber::initialize(FiberScheduler& scheduler, FiberEntry entry,
+Status Fiber::initialize(FiberScheduler* scheduler, FiberEntry entry,
                          std::uint64_t initialize_arg, FiberOptions options) noexcept {
     if (handle_) return {Error::invalid_state};
-    const auto status = scheduler.check_thread();
-    if (!status) return status;
+    if (scheduler) {
+        const auto status = scheduler->check_thread();
+        if (!status) return status;
+    }
     if (!entry || !options.reserve_size || !options.commit_size ||
         options.commit_size > options.reserve_size) return {Error::invalid_argument};
     if (options.supplied_stack) return {Error::unsupported};
@@ -346,13 +356,15 @@ Status Fiber::initialize(FiberScheduler& scheduler, FiberEntry entry,
                             FIBER_FLAG_FLOAT_SWITCH, &Fiber::trampoline, this);
     if (!handle_) return {Error::system_error, static_cast<std::uint32_t>(GetLastError())};
 
-    scheduler_ = &scheduler;
+    scheduler_ = scheduler;
     entry_ = entry;
     initialize_arg_ = initialize_arg;
     incoming_ = 0;
     exception_ = nullptr;
     state_ = FiberState::ready;
-    ++scheduler_->live_fibers_;
+    if (scheduler_) {
+        ++scheduler_->live_fibers_;
+    }
 
     {
         std::lock_guard<std::mutex> lock(g_tls_template_mutex);
@@ -381,7 +393,9 @@ Status Fiber::finalize() noexcept {
     }
     DeleteFiber(handle_);
     if (scheduler_) {
-        --scheduler_->live_fibers_;
+        if (scheduler_->live_fibers_ > 0) {
+            --scheduler_->live_fibers_;
+        }
         scheduler_ = nullptr;
     }
     handle_ = nullptr;
@@ -418,16 +432,18 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberInitialize(
     }
 
     auto* scheduler = FiberScheduler::for_thread();
-    if (!scheduler) {
-        return static_cast<int32_t>(orbis::Error::FIBER_ENORES);
-    }
-
     auto host = std::make_unique<Fiber>();
     host->guest_stack_base = stack_base;
     host->guest_stack_size = stack_size;
 
-    auto status = host->initialize(*scheduler, entry, arg);
+    FiberOptions options{};
+    options.reserve_size = 1024 * 1024;
+    options.commit_size = 64 * 1024;
+
+    auto status = host->initialize(scheduler, entry, arg, options);
     if (!status) {
+        std::fprintf(stderr, "[Fiber] host->initialize failed: %s (native=%u)\n",
+                     error_name(status.error), status.native_error);
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
 
@@ -451,6 +467,10 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberInitialize(
     fiber->magic_end = orbis::ORBIS_FIBER_MAGIC_END;
     fiber->padding_end = 0;
 
+    std::fprintf(stderr, "[Fiber] Initialized fiber '%s' at %p (host=%p), entry=%p, arg=0x%llx\n",
+                 fiber->name, static_cast<void*>(fiber), static_cast<void*>(host.get()),
+                 reinterpret_cast<void*>(entry), static_cast<unsigned long long>(arg));
+
     FiberRegistry::instance().register_fiber(fiber, std::move(host));
     return static_cast<int32_t>(orbis::Error::OK);
 }
@@ -473,11 +493,17 @@ extern "C" GRAVITY_SYSV_ABI int32_t sceFiberRun(
         return static_cast<int32_t>(orbis::Error::FIBER_ENORES);
     }
 
+    std::fprintf(stderr, "[Fiber] sceFiberRun '%s' (host=%p, arg=0x%llx) on tid=0x%lx\n",
+                 fiber->name, static_cast<void*>(host), static_cast<unsigned long long>(arg),
+                 static_cast<unsigned long>(GetCurrentThreadId()));
+
     fiber->state = static_cast<uint32_t>(orbis::FiberState::running);
     uint64_t returned = 0;
     auto status = scheduler->run(*host, arg, returned);
     if (!status) {
         fiber->state = static_cast<uint32_t>(orbis::FiberState::suspended);
+        std::fprintf(stderr, "[Fiber] sceFiberRun '%s' failed: %s (native=%u)\n",
+                     fiber->name, error_name(status.error), status.native_error);
         return static_cast<int32_t>(orbis::Error::FIBER_EINVAL);
     }
     if (host->state() == FiberState::completed) {

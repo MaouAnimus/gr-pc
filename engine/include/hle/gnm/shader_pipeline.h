@@ -25,7 +25,8 @@ class VulkanShaderPipeline {
 public:
     static VulkanShaderPipeline& instance();
 
-    bool initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat colorFormat = VK_FORMAT_B8G8R8A8_UNORM);
+    bool initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkFormat colorFormat,
+                    VkQueue uploadQueue, std::uint32_t queueFamily);
     void shutdown();
     bool is_ready() const noexcept;
 
@@ -41,6 +42,15 @@ public:
     void reset_video_textures();
 
 private:
+    struct DrawUpload {
+        VkDevice device{VK_NULL_HANDLE};
+        VkBuffer vertices{VK_NULL_HANDLE}, indices{VK_NULL_HANDLE};
+        VkDeviceMemory vertex_memory{VK_NULL_HANDLE}, index_memory{VK_NULL_HANDLE};
+        ~DrawUpload();
+    };
+    bool upload_draw_buffer(const void* data, VkDeviceSize bytes, VkBufferUsageFlags usage,
+                            VkBuffer& buffer, VkDeviceMemory& memory);
+
     struct DynamicPipeline {
         VkPipeline pipeline{VK_NULL_HANDLE};
         VkPipelineLayout layout{VK_NULL_HANDLE};
@@ -54,6 +64,10 @@ private:
     VkDevice device_{VK_NULL_HANDLE};
     VkPhysicalDevice physical_device_{VK_NULL_HANDLE};
     VkFormat color_format_{VK_FORMAT_B8G8R8A8_UNORM};
+    VkQueue upload_queue_{VK_NULL_HANDLE};
+    VkCommandPool upload_pool_{VK_NULL_HANDLE};
+    VkCommandBuffer upload_command_{VK_NULL_HANDLE};
+    VkFence upload_fence_{VK_NULL_HANDLE};
     VkPipelineLayout layout_{VK_NULL_HANDLE};
     VkPipeline pipeline_{VK_NULL_HANDLE};
     VkShaderModule vert_module_{VK_NULL_HANDLE};
@@ -78,7 +92,7 @@ private:
     VkDeviceSize index_buffer_size_{0};
 
     std::unordered_map<uint64_t, CachedTexture> texture_cache_{};
-    std::unordered_map<uint64_t, DynamicPipeline> dynamic_pipelines_{};
+    std::unordered_map<std::string, DynamicPipeline> dynamic_pipelines_{};
     ShaderCache shader_cache_{".spv_cache"};
 
     struct VideoEntry {
@@ -92,6 +106,7 @@ private:
     bool create_buffer(VkPhysicalDevice phys, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buffer, VkDeviceMemory& memory);
     std::uint32_t find_memory_type(VkPhysicalDevice phys, std::uint32_t typeFilter, VkMemoryPropertyFlags properties);
     bool create_linear_texture(uint32_t width, uint32_t height, VkFormat format, const void* pixels, CachedTexture& out);
+    bool transition_uploaded_texture(VkImage image);
     VkPipeline create_pipeline_for_shaders(VkShaderModule vs, VkShaderModule ps, VkPipelineLayout layout);
     DynamicPipeline* get_or_create_dynamic_pipeline(uint64_t vs_addr, uint64_t ps_addr);
 };

@@ -18,6 +18,7 @@ constexpr auto timed_out = static_cast<std::int32_t>(0x8002003cU);
 constexpr auto canceled = static_cast<std::int32_t>(0x80020055U);
 struct Ticket { int priority{256}; };
 struct Semaphore {
+    std::string name{};
     std::mutex mutex;
     std::condition_variable changed;
     std::list<Ticket*> waiters;
@@ -41,6 +42,7 @@ extern "C" GRAVITY_SYSV_ABI std::int32_t sceKernelCreateSema(Handle* output, con
     char safe_name[33]{};
     if (!guest_memory::string(name, safe_name, sizeof(safe_name))) return invalid;
     auto semaphore = std::make_shared<Semaphore>();
+    semaphore->name = safe_name;
     semaphore->available = semaphore->initial = initial;
     semaphore->maximum = maximum;
     semaphore->priority_order = attributes == 2;
@@ -101,7 +103,11 @@ extern "C" GRAVITY_SYSV_ABI std::int32_t sceKernelSignalSema(Handle handle, std:
     if (!semaphore) return missing;
     std::lock_guard lock(semaphore->mutex);
     if (semaphore->deleted) return missing;
-    if (count < 1 || count > semaphore->maximum - semaphore->available) return invalid;
+    if (count < 1 || count > semaphore->maximum - semaphore->available) {
+        std::fprintf(stderr, "[Sema] sceKernelSignalSema error: sem=%s (0x%llx), count=%d, avail=%d, max=%d\n",
+                     semaphore->name.c_str(), static_cast<unsigned long long>(handle), count, semaphore->available, semaphore->maximum);
+        return invalid;
+    }
     semaphore->available += count;
     semaphore->changed.notify_all();
     return 0;
@@ -118,5 +124,18 @@ extern "C" GRAVITY_SYSV_ABI std::int32_t sceKernelCancelSema(Handle handle, std:
     ++semaphore->generation;
     semaphore->changed.notify_all();
     return 0;
+}
+void dump_semaphores() {
+    std::lock_guard lock(registry_mutex);
+    std::fprintf(stderr, "\n=== Active Semaphores Dump (%zu registered) ===\n", registry.size());
+    for (const auto& [handle, sem] : registry) {
+        if (!sem) continue;
+        std::lock_guard sem_lock(sem->mutex);
+        if (sem->waiters.empty() && sem->available > 0) continue;
+        std::fprintf(stderr, "Sema %s (handle=0x%llx): avail=%d/%d, waiters=%zu\n",
+                     sem->name.c_str(), static_cast<unsigned long long>(handle),
+                     sem->available, sem->maximum, sem->waiters.size());
+    }
+    std::fprintf(stderr, "===============================================\n\n");
 }
 }

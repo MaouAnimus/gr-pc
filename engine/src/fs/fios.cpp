@@ -40,6 +40,25 @@ std::int32_t g_next_mount_id{1};
 std::unordered_map<std::int32_t, FiosOp> g_ops{};
 std::int32_t g_next_op_id{1};
 
+void trigger_op_callback(const void* attr, SceFiosOp op, std::int32_t status, std::int32_t error) {
+    if (!attr) return;
+    if (!guest_memory::accessible(attr, sizeof(SceFiosOpAttr))) return;
+
+    std::uintptr_t cb_addr = 0;
+    std::uintptr_t ctx_addr = 0;
+    if (!guest_memory::read(reinterpret_cast<const std::uint8_t*>(attr) + 8, &cb_addr, sizeof(cb_addr))) return;
+    if (!guest_memory::read(reinterpret_cast<const std::uint8_t*>(attr) + 16, &ctx_addr, sizeof(ctx_addr))) return;
+
+    if (cb_addr) {
+        using CallbackFn = void(GRAVITY_SYSV_ABI*)(void* context, SceFiosOp op, std::int32_t status, std::int32_t error);
+        auto fn = reinterpret_cast<CallbackFn>(cb_addr);
+        std::fprintf(stderr, "[FIOS] Invoking op callback at %p (ctx=%p, op=%d, status=%d, error=%d)\n",
+                     reinterpret_cast<void*>(cb_addr), reinterpret_cast<void*>(ctx_addr), op, status, error);
+        fn(reinterpret_cast<void*>(ctx_addr), op, status, error);
+        std::fprintf(stderr, "[FIOS] Op callback %p returned\n", reinterpret_cast<void*>(cb_addr));
+    }
+}
+
 } // anonymous namespace
 
 bool is_initialized() noexcept {
@@ -186,8 +205,8 @@ GRAVITY_SYSV_ABI std::int64_t sceFiosArchiveGetMountBufferSizeSync(
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceFiosArchiveMountSync(
-    const void* attr, const char* archive_path, const char* mount_point,
-    void* buffer, std::size_t buffer_size, const void* params, std::int32_t* out_mount_id) {
+    const void* attr, std::int32_t* out_mount_id, const char* archive_path,
+    const char* mount_point, void* buffer, std::size_t buffer_size, const void* params) {
     (void)attr; (void)params;
     if (!archive_path || !mount_point) return SCE_FIOS_ERROR_NULL_POINTER;
 
@@ -244,31 +263,38 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosFHOpenSync(
         return SCE_FIOS_ERROR_FILE_NOT_FOUND;
     }
     guest_memory::write(out_fh, &fd, sizeof(fd));
+    std::fprintf(stderr, "[FIOS] sceFiosFHOpenSync: Opened '%s' -> fd=%d\n", path_buf, fd);
     return SCE_FIOS_OK;
 }
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHOpen(
     const void* attr, SceFiosFH* out_fh, const char* path, const void* params) {
-    (void)attr; (void)params;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    if (!path || !out_fh || !guest_memory::accessible(out_fh, sizeof(SceFiosFH))) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
-    }
+    (void)params;
+    SceFiosOp op = 0;
+    std::int32_t err = SCE_FIOS_OK;
     char path_buf[260]{};
-    if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+
+    if (!path || !out_fh || !guest_memory::accessible(out_fh, sizeof(SceFiosFH))) {
+        err = SCE_FIOS_ERROR_NULL_POINTER;
+    } else if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
+        err = SCE_FIOS_ERROR_NULL_POINTER;
+    } else {
+        const std::int32_t fd = fs::vfs_open(path_buf, 0, 0);
+        if (fd < 0) {
+            std::fprintf(stderr, "[FIOS] sceFiosFHOpen: Failed to open '%s'\n", path_buf);
+            err = SCE_FIOS_ERROR_FILE_NOT_FOUND;
+        } else {
+            guest_memory::write(out_fh, &fd, sizeof(fd));
+            std::fprintf(stderr, "[FIOS] sceFiosFHOpen: Opened '%s' -> fd=%d\n", path_buf, fd);
+        }
     }
-    const std::int32_t fd = fs::vfs_open(path_buf, 0, 0);
-    if (fd < 0) {
-        std::fprintf(stderr, "[FIOS] sceFiosFHOpen: Failed to open '%s'\n", path_buf);
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_FILE_NOT_FOUND, 0};
-        return op;
+
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, 0};
     }
-    guest_memory::write(out_fh, &fd, sizeof(fd));
-    g_ops[op] = FiosOp{op, SCE_FIOS_OK, 0};
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
@@ -286,45 +312,57 @@ GRAVITY_SYSV_ABI std::int64_t sceFiosFHReadSync(
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHRead(
     const void* attr, SceFiosFH fh, void* data, std::size_t size) {
-    (void)attr;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    if (size == 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, 0};
-        return op;
+    SceFiosOp op = 0;
+    std::int32_t err = SCE_FIOS_OK;
+    std::int64_t count = 0;
+
+    if (size > 0) {
+        if (!data || !guest_memory::accessible(data, size)) {
+            err = SCE_FIOS_ERROR_NULL_POINTER;
+        } else {
+            const std::int32_t read_bytes = fs::vfs_read(fh, data, static_cast<std::uint32_t>(size));
+            if (read_bytes < 0) {
+                err = SCE_FIOS_ERROR_BAD_FH;
+            } else {
+                count = read_bytes;
+            }
+        }
     }
-    if (!data || !guest_memory::accessible(data, size)) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, count};
     }
-    const std::int32_t read_bytes = fs::vfs_read(fh, data, static_cast<std::uint32_t>(size));
-    if (read_bytes < 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_BAD_FH, 0};
-    } else {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, read_bytes};
-    }
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHPread(
     const void* attr, SceFiosFH fh, void* data, std::size_t size, std::int64_t offset) {
-    (void)attr;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    if (size == 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, 0};
-        return op;
+    SceFiosOp op = 0;
+    std::int32_t err = SCE_FIOS_OK;
+    std::int64_t count = 0;
+
+    if (size > 0) {
+        if (!data || !guest_memory::accessible(data, size)) {
+            err = SCE_FIOS_ERROR_NULL_POINTER;
+        } else {
+            const std::int32_t read_bytes = fs::vfs_pread(fh, data, static_cast<std::uint32_t>(size), offset);
+            if (read_bytes < 0) {
+                err = SCE_FIOS_ERROR_BAD_FH;
+            } else {
+                count = read_bytes;
+            }
+        }
     }
-    if (!data || !guest_memory::accessible(data, size)) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, count};
     }
-    const std::int32_t read_bytes = fs::vfs_pread(fh, data, static_cast<std::uint32_t>(size), offset);
-    if (read_bytes < 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_BAD_FH, 0};
-    } else {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, read_bytes};
-    }
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
@@ -335,11 +373,15 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosFHCloseSync(const void* attr, SceFiosFH fh)
 }
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHClose(const void* attr, SceFiosFH fh) {
-    (void)attr;
     const std::int32_t res = fs::vfs_close(fh);
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    g_ops[op] = FiosOp{op, res < 0 ? SCE_FIOS_ERROR_BAD_FH : SCE_FIOS_OK, 0};
+    const std::int32_t err = res < 0 ? SCE_FIOS_ERROR_BAD_FH : SCE_FIOS_OK;
+    SceFiosOp op = 0;
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, 0};
+    }
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
@@ -369,10 +411,14 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosFHSyncSync(const void* attr, SceFiosFH fh) 
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHWrite(
     const void* attr, SceFiosFH fh, const void* data, std::size_t size) {
-    (void)attr; (void)fh; (void)data; (void)size;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    (void)fh; (void)data; (void)size;
+    SceFiosOp op = 0;
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    }
+    trigger_op_callback(attr, op, 1, SCE_FIOS_ERROR_CANNOT_WRITE);
     return op;
 }
 
@@ -384,10 +430,14 @@ GRAVITY_SYSV_ABI std::int64_t sceFiosFHWriteSync(
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFHPwrite(
     const void* attr, SceFiosFH fh, const void* data, std::size_t size, std::int64_t offset) {
-    (void)attr; (void)fh; (void)data; (void)size; (void)offset;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    (void)fh; (void)data; (void)size; (void)offset;
+    SceFiosOp op = 0;
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    }
+    trigger_op_callback(attr, op, 1, SCE_FIOS_ERROR_CANNOT_WRITE);
     return op;
 }
 
@@ -404,6 +454,7 @@ GRAVITY_SYSV_ABI std::int64_t sceFiosFileGetSizeSync(
         return SCE_FIOS_ERROR_NULL_POINTER;
     }
     const std::int64_t sz = fs::vfs_file_size(path_buf);
+    std::fprintf(stderr, "[FIOS] FileGetSizeSync: '%s' -> %lld\n", path_buf, static_cast<long long>(sz));
     if (sz < 0) return SCE_FIOS_ERROR_FILE_NOT_FOUND;
     return sz;
 }
@@ -416,7 +467,9 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosExistsSync(
     if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
         return SCE_FIOS_ERROR_NULL_POINTER;
     }
-    return fs::vfs_exists(path_buf) ? 1 : 0;
+    const std::int32_t exists = fs::vfs_exists(path_buf) ? 1 : 0;
+    std::fprintf(stderr, "[FIOS] ExistsSync: '%s' -> %d\n", path_buf, exists);
+    return exists;
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceFiosDirectoryExistsSync(
@@ -427,7 +480,9 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosDirectoryExistsSync(
     if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
         return SCE_FIOS_ERROR_NULL_POINTER;
     }
-    return fs::vfs_is_dir(path_buf) ? 1 : 0;
+    const std::int32_t is_dir = fs::vfs_is_dir(path_buf) ? 1 : 0;
+    std::fprintf(stderr, "[FIOS] DirectoryExistsSync: '%s' -> %d\n", path_buf, is_dir);
+    return is_dir;
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceFiosStatSync(
@@ -443,13 +498,14 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosStatSync(
     }
     SceFiosStat st{};
     const std::int32_t res = fs::vfs_stat(path_buf, &st);
+    std::fprintf(stderr, "[FIOS] StatSync: '%s' -> %d\n", path_buf, res);
     if (res != 0) return SCE_FIOS_ERROR_FILE_NOT_FOUND;
     guest_memory::write(out_stat, &st, sizeof(st));
     return SCE_FIOS_OK;
 }
 
 GRAVITY_SYSV_ABI std::int64_t sceFiosFileReadSync(
-    const void* attr, const char* path, std::int64_t offset, void* data, std::size_t size) {
+    const void* attr, const char* path, void* data, std::size_t size, std::int64_t offset) {
     (void)attr;
     if (size == 0) return 0;
     if (!path || !data) return SCE_FIOS_ERROR_NULL_POINTER;
@@ -459,58 +515,73 @@ GRAVITY_SYSV_ABI std::int64_t sceFiosFileReadSync(
         return SCE_FIOS_ERROR_NULL_POINTER;
     }
     const std::int32_t fd = fs::vfs_open(path_buf, 0, 0);
-    if (fd < 0) return SCE_FIOS_ERROR_FILE_NOT_FOUND;
+    if (fd < 0) {
+        std::fprintf(stderr, "[FIOS] FileReadSync: Failed to open '%s'\n", path_buf);
+        return SCE_FIOS_ERROR_FILE_NOT_FOUND;
+    }
     const std::int32_t read_bytes = fs::vfs_pread(fd, data, static_cast<std::uint32_t>(size), offset);
     fs::vfs_close(fd);
+    std::fprintf(stderr, "[FIOS] FileReadSync: '%s' off=%lld sz=%zu -> %d\n",
+                 path_buf, static_cast<long long>(offset), size, read_bytes);
     if (read_bytes < 0) return SCE_FIOS_ERROR_BAD_FH;
     return read_bytes;
 }
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFileRead(
-    const void* attr, const char* path, std::int64_t offset, void* data, std::size_t size) {
-    (void)attr;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    if (size == 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, 0};
-        return op;
+    const void* attr, const char* path, void* data, std::size_t size, std::int64_t offset) {
+    SceFiosOp op = 0;
+    std::int32_t err = SCE_FIOS_OK;
+    std::int64_t count = 0;
+
+    if (size > 0) {
+        if (!path || !data || !guest_memory::accessible(data, size)) {
+            err = SCE_FIOS_ERROR_NULL_POINTER;
+        } else {
+            char path_buf[260]{};
+            if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
+                err = SCE_FIOS_ERROR_NULL_POINTER;
+            } else {
+                const std::int32_t fd = fs::vfs_open(path_buf, 0, 0);
+                if (fd < 0) {
+                    err = SCE_FIOS_ERROR_FILE_NOT_FOUND;
+                } else {
+                    const std::int32_t read_bytes = fs::vfs_pread(fd, data, static_cast<std::uint32_t>(size), offset);
+                    fs::vfs_close(fd);
+                    if (read_bytes < 0) {
+                        err = SCE_FIOS_ERROR_BAD_FH;
+                    } else {
+                        count = read_bytes;
+                    }
+                }
+            }
+        }
     }
-    if (!path || !data || !guest_memory::accessible(data, size)) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, count};
     }
-    char path_buf[260]{};
-    if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
-    }
-    const std::int32_t fd = fs::vfs_open(path_buf, 0, 0);
-    if (fd < 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_FILE_NOT_FOUND, 0};
-        return op;
-    }
-    const std::int32_t read_bytes = fs::vfs_pread(fd, data, static_cast<std::uint32_t>(size), offset);
-    fs::vfs_close(fd);
-    if (read_bytes < 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_BAD_FH, 0};
-    } else {
-        g_ops[op] = FiosOp{op, SCE_FIOS_OK, read_bytes};
-    }
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
 GRAVITY_SYSV_ABI std::int64_t sceFiosFileWriteSync(
-    const void* attr, const char* path, std::int64_t offset, const void* data, std::size_t size) {
+    const void* attr, const char* path, const void* data, std::size_t size, std::int64_t offset) {
     (void)attr; (void)path; (void)offset; (void)data; (void)size;
     return SCE_FIOS_ERROR_CANNOT_WRITE;
 }
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFileWrite(
-    const void* attr, const char* path, std::int64_t offset, const void* data, std::size_t size) {
-    (void)attr; (void)path; (void)offset; (void)data; (void)size;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
-    g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    const void* attr, const char* path, const void* data, std::size_t size, std::int64_t offset) {
+    (void)path; (void)offset; (void)data; (void)size;
+    SceFiosOp op = 0;
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_CANNOT_WRITE, 0};
+    }
+    trigger_op_callback(attr, op, 1, SCE_FIOS_ERROR_CANNOT_WRITE);
     return op;
 }
 
@@ -548,25 +619,32 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosDHOpenSync(
 
 GRAVITY_SYSV_ABI SceFiosOp sceFiosDHOpen(
     const void* attr, SceFiosDH* out_dh, const char* path, const void* params) {
-    (void)attr; (void)params;
-    std::lock_guard lock(g_fios_mutex);
-    const SceFiosOp op = g_next_op_id++;
+    (void)params;
+    SceFiosOp op = 0;
+    std::int32_t err = SCE_FIOS_OK;
+
     if (!path || !out_dh || !guest_memory::accessible(out_dh, sizeof(SceFiosDH))) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+        err = SCE_FIOS_ERROR_NULL_POINTER;
+    } else {
+        char path_buf[260]{};
+        if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
+            err = SCE_FIOS_ERROR_NULL_POINTER;
+        } else {
+            const std::int32_t dh = fs::vfs_opendir(path_buf);
+            if (dh < 0) {
+                err = SCE_FIOS_ERROR_PATH_NOT_FOUND;
+            } else {
+                guest_memory::write(out_dh, &dh, sizeof(dh));
+            }
+        }
     }
-    char path_buf[260]{};
-    if (!guest_memory::string(path, path_buf, sizeof(path_buf))) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_NULL_POINTER, 0};
-        return op;
+
+    {
+        std::lock_guard lock(g_fios_mutex);
+        op = g_next_op_id++;
+        g_ops[op] = FiosOp{op, err, 0};
     }
-    const std::int32_t dh = fs::vfs_opendir(path_buf);
-    if (dh < 0) {
-        g_ops[op] = FiosOp{op, SCE_FIOS_ERROR_PATH_NOT_FOUND, 0};
-        return op;
-    }
-    guest_memory::write(out_dh, &dh, sizeof(dh));
-    g_ops[op] = FiosOp{op, SCE_FIOS_OK, 0};
+    trigger_op_callback(attr, op, 1, err);
     return op;
 }
 
@@ -660,7 +738,21 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosDebugDumpError(
             std::snprintf(out_buf, buf_size, "%s (0x%x)", desc, error);
         }
     }
-    std::fprintf(stderr, "[FIOS] sceFiosDebugDumpError: 0x%x (%s)\n", error, desc);
+    std::uintptr_t cur_rbp = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
+    void* caller1 = nullptr;
+    void* caller2 = nullptr;
+    if (guest_memory::accessible(reinterpret_cast<const void*>(cur_rbp), 16)) {
+        std::uintptr_t rbp1 = *reinterpret_cast<std::uintptr_t*>(cur_rbp);
+        if (guest_memory::accessible(reinterpret_cast<const void*>(rbp1), 16)) {
+            caller1 = *reinterpret_cast<void**>(rbp1 + 8);
+            std::uintptr_t rbp2 = *reinterpret_cast<std::uintptr_t*>(rbp1);
+            if (guest_memory::accessible(reinterpret_cast<const void*>(rbp2), 16)) {
+                caller2 = *reinterpret_cast<void**>(rbp2 + 8);
+            }
+        }
+    }
+    std::fprintf(stderr, "[FIOS] sceFiosDebugDumpError: 0x%x (%s), caller1=%p, caller2=%p\n",
+                 error, desc, caller1, caller2);
     return SCE_FIOS_OK;
 }
 

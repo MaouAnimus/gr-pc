@@ -7,6 +7,7 @@ namespace gravity::hle::pthread {
 using Opaque = std::uint64_t;
 using Entry = void*(GRAVITY_SYSV_ABI*)(void*);
 void configure(const runner::RunnerConfig& config);
+void dump_threads();
 extern "C" {
 GRAVITY_SYSV_ABI int attr_init(Opaque* attr);
 GRAVITY_SYSV_ABI int attr_destroy(Opaque* attr);

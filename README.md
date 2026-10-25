@@ -4,7 +4,7 @@ Runtime C++23 para Windows x86-64. Carga e inspecciona el volcado local de Gravi
 
 ## Compilar y comprobar
 
-Requiere Windows 10 1803 o posterior, MSYS2 Clang64 con CMake, Ninja, zlib, SDL3, Vulkan, glslc (para las pruebas) y RTK. El toolchain predeterminado es C:\msys64\clang64\bin; se cambia con -ToolchainBin.
+Requiere Windows 10 1803 o posterior, MSYS2 Clang64 con CMake, Ninja, zlib, SDL3, Vulkan, SPIRV-Tools, glslc (para las pruebas) y RTK. El toolchain predeterminado es C:\msys64\clang64\bin; se cambia con -ToolchainBin.
 
 ```powershell
 rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_runtime.ps1 -Configuration Debug
@@ -63,4 +63,4 @@ El [conector AvPlayer con Media Foundation](docs/AVPLAYER_MEDIA_FOUNDATION.md) d
 
 La [base de físicas y gravedad 360°](docs/PHYSICS_GRAVITY_60HZ.md) corrige relojes y sincronización guest e incorpora paso fijo de 60 Hz y CCD de esfera contra triángulos. Su conexión al mundo Havok del juego sigue pendiente y se distingue de las pruebas nativas.
 
-Shaders: incorporados el decodificador de formatos ISA Sea Islands y la [caché SPIR-V en disco](docs/SHADER_DISK_CACHE.md). El generador GCN→SPIR-V y el enlace de recursos gráficos del juego siguen pendientes; estos componentes todavía no renderizan Kat ni Hekseville.
+Shaders: incorporados el decodificador Sea Islands, un subconjunto GCN→SPIR-V y la [caché en disco](docs/SHADER_DISK_CACHE.md). Las [correcciones de la revisión](docs/SHADER_REVIEW_FIXES.md) validan módulos, rechazan instrucciones sin soporte y preservan geometría por dibujo. El enlace completo de recursos gráficos del juego sigue pendiente; todavía no se certifica el renderizado de Kat ni Hekseville.

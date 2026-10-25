@@ -23,6 +23,11 @@ struct SceNgs2VoiceBufferParams {
     std::uint32_t loop{0};
 };
 
+struct SceNgs2RackBufferInfo {
+    void* hostBuffer{nullptr};
+    std::size_t hostBufferSize{0};
+};
+
 extern "C" {
 
 GRAVITY_SYSV_ABI std::int32_t sceNgs2SystemCreateWithAllocator(
@@ -31,7 +36,7 @@ GRAVITY_SYSV_ABI std::int32_t sceNgs2SystemCreateWithAllocator(
 GRAVITY_SYSV_ABI std::int32_t sceNgs2SystemDestroy(std::uint32_t sys_handle);
 
 GRAVITY_SYSV_ABI std::int32_t sceNgs2RackQueryBufferSize(
-    const void* params, std::size_t* out_size);
+    const void* arg1, const void* arg2, void* arg3 = nullptr);
 
 GRAVITY_SYSV_ABI std::int32_t sceNgs2RackCreate(
     std::uint32_t sys_handle, const void* params, void* buffer,

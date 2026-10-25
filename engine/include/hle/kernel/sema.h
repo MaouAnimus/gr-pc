@@ -11,4 +11,5 @@ GRAVITY_SYSV_ABI std::int32_t sceKernelWaitSema(Handle handle, std::int32_t coun
 GRAVITY_SYSV_ABI std::int32_t sceKernelSignalSema(Handle handle, std::int32_t count);
 GRAVITY_SYSV_ABI std::int32_t sceKernelCancelSema(Handle handle, std::int32_t count, std::int32_t* waiters);
 }
+void dump_semaphores();
 }

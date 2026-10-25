@@ -13,6 +13,8 @@ struct Attribute { std::size_t stack_size{1024 * 1024}; bool detached{}; };
 struct Thread {
     ~Thread() { if (handle) CloseHandle(handle); }
     HANDLE handle{};
+    DWORD win32_tid{};
+    std::string name{};
     Opaque token{};
     Entry entry{};
     void* argument{};
@@ -38,10 +40,17 @@ DWORD WINAPI worker(void* parameter) {
     std::unique_ptr<std::shared_ptr<Thread>> owner(static_cast<std::shared_ptr<Thread>*>(parameter));
     const auto thread = *owner;
     current_token = thread->token;
+    const auto tid = GetCurrentThreadId();
+    std::fprintf(stderr, "[Pthread] Worker entered: %s (handle=0x%llx, win32_tid=0x%lx)\n",
+                 thread->name.c_str(), static_cast<unsigned long long>(thread->token), static_cast<unsigned long>(tid));
     const auto report = runner::execute_current_sysv(reinterpret_cast<std::uintptr_t>(thread->entry),
         reinterpret_cast<std::uint64_t>(thread->argument), thread->config);
     if (!report.succeeded) {
-        std::fprintf(stderr, "[Pthread] Callback failed: %s\n", report.error_message.c_str());
+        std::fprintf(stderr, "[Pthread] Callback failed: %s (thread=%s, tid=0x%lx)\n",
+                     report.error_message.c_str(), thread->name.c_str(), static_cast<unsigned long>(tid));
+    } else {
+        std::fprintf(stderr, "[Pthread] Worker returned: %s (handle=0x%llx, win32_tid=0x%lx)\n",
+                     thread->name.c_str(), static_cast<unsigned long long>(thread->token), static_cast<unsigned long>(tid));
     }
     thread->result = reinterpret_cast<void*>(report.return_value);
     if (thread->detached) { std::lock_guard lock(registry_mutex); threads.erase(thread->token); }
@@ -52,6 +61,41 @@ void configure(const runner::RunnerConfig& config) {
     std::lock_guard lock(registry_mutex);
     process_config = config;
     process_config.terminate_process_on_exception = true;
+}
+void dump_threads() {
+    std::lock_guard lock(registry_mutex);
+    std::fprintf(stderr, "\n=== Active Guest Threads Dump (%zu registered) ===\n", threads.size());
+    for (const auto& [token, thread] : threads) {
+        if (!thread || !thread->handle) continue;
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_ALL;
+        SuspendThread(thread->handle);
+        if (GetThreadContext(thread->handle, &ctx)) {
+            std::string mod;
+            uintptr_t off = 0;
+            runner::resolve_address_module(ctx.Rip, thread->config, mod, off);
+            std::fprintf(stderr, "Thread %s (token=0x%llx, win32_tid=0x%lx): RIP=0x%llx (%s+0x%llx) RSP=0x%llx\n",
+                         thread->name.c_str(), static_cast<unsigned long long>(token),
+                         static_cast<unsigned long>(thread->win32_tid),
+                         static_cast<unsigned long long>(ctx.Rip), mod.c_str(),
+                         static_cast<unsigned long long>(off),
+                         static_cast<unsigned long long>(ctx.Rsp));
+            for (int i = 0; i < 48; ++i) {
+                uintptr_t stack_val = 0;
+                if (guest_memory::read(reinterpret_cast<const void*>(ctx.Rsp + i * 8), &stack_val, sizeof(stack_val))) {
+                    if (!stack_val) continue;
+                    std::string smod;
+                    uintptr_t soff = 0;
+                    runner::resolve_address_module(stack_val, thread->config, smod, soff);
+                    if (smod == "unknown_module") continue;
+                    std::fprintf(stderr, "    [RSP+%03d] 0x%016llx (%s+0x%llx)\n",
+                                 i * 8, static_cast<unsigned long long>(stack_val), smod.c_str(), static_cast<unsigned long long>(soff));
+                }
+            }
+        }
+        ResumeThread(thread->handle);
+    }
+    std::fprintf(stderr, "=================================================\n\n");
 }
 extern "C" GRAVITY_SYSV_ABI int attr_init(Opaque* output) {
     std::lock_guard lock(registry_mutex);
@@ -104,11 +148,12 @@ extern "C" GRAVITY_SYSV_ABI int create(Opaque* output, const Opaque* attr, Entry
     thread->entry = entry;
     thread->argument = argument;
     thread->detached = settings.detached;
+    thread->name = safe_name;
     auto owner = std::make_unique<std::shared_ptr<Thread>>(thread);
     // Reserve additional stack for native C++ adapters and Windows diagnostics.
     const auto host_stack = (std::max)(settings.stack_size, std::size_t(1024 * 1024));
     thread->handle = CreateThread(nullptr, host_stack, worker, owner.get(),
-        CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+        CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, &thread->win32_tid);
     if (!thread->handle) return 35; // EAGAIN.
     if (!guest_memory::write(output, &thread->token, sizeof(thread->token))) {
         TerminateThread(thread->handle, 1); // Still suspended; callback never ran.
@@ -122,8 +167,15 @@ extern "C" GRAVITY_SYSV_ABI int create(Opaque* output, const Opaque* attr, Entry
         return 35;
     }
     (void)owner.release(); // Worker owns the shared reference after it starts.
-    std::fprintf(stderr, "[Pthread] Started %s handle=0x%llx stack=%zu\n", safe_name,
-        static_cast<unsigned long long>(thread->token), settings.stack_size);
+    uintptr_t target_fn = 0, target_ctx = 0;
+    if (argument) {
+        (void)guest_memory::read(reinterpret_cast<const char*>(argument) + 8, &target_fn, sizeof(target_fn));
+        (void)guest_memory::read(reinterpret_cast<const char*>(argument) + 16, &target_ctx, sizeof(target_ctx));
+    }
+    std::fprintf(stderr, "[Pthread] Started %s handle=0x%llx win32_tid=0x%lx entry=%p (target=0x%llx, ctx=0x%llx) arg=%p stack=%zu\n", safe_name,
+        static_cast<unsigned long long>(thread->token), static_cast<unsigned long>(thread->win32_tid),
+        reinterpret_cast<void*>(thread->entry), static_cast<unsigned long long>(target_fn),
+        static_cast<unsigned long long>(target_ctx), thread->argument, settings.stack_size);
     return 0;
 }
 extern "C" GRAVITY_SYSV_ABI Opaque self() {
@@ -132,6 +184,11 @@ extern "C" GRAVITY_SYSV_ABI Opaque self() {
 extern "C" GRAVITY_SYSV_ABI int join(Opaque token, void** result) {
     if (token == self()) return 11;
     const auto thread = find(token);
+    std::fprintf(stderr, "[Pthread] join(token=0x%llx, name=%s, win32_tid=0x%lx, handle=%p) from caller=%p tid=0x%lx\n",
+                 static_cast<unsigned long long>(token), thread ? thread->name.c_str() : "unknown",
+                 thread ? static_cast<unsigned long>(thread->win32_tid) : 0,
+                 thread ? thread->handle : nullptr, __builtin_return_address(0),
+                 static_cast<unsigned long>(GetCurrentThreadId()));
     if (!thread) return 3;
     if (thread->detached || (result && !guest_memory::accessible(result, sizeof(*result), true))) return 22;
     if (thread->joining.exchange(true)) return 22;

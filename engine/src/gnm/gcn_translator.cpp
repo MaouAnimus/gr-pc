@@ -1,4 +1,5 @@
 #include "hle/gnm/gcn_translator.h"
+#include "hle/gnm/spirv_validation.h"
 
 #include <algorithm>
 #include <array>
@@ -6,15 +7,188 @@
 #include <cstdio>
 #include <unordered_map>
 #include <utility>
+#include <sstream>
+#include <stdexcept>
+#include <locale>
 
 namespace gravity::hle::gnm::gcn {
 namespace {
 
+bool one_of(std::uint32_t value, std::initializer_list<std::uint32_t> values) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+// Refuse a program before emitting any SPIR-V if it needs semantics we do not
+// implement. Register initialization in emitted code is storage initialization,
+// not permission to replace missing guest inputs by zeros.
+bool validate_subset(const Program& program, const TranslateConfig& config, TranslateResult& result) {
+    auto fail = [&](const Instruction& instruction, const std::string& reason) {
+        result.error_word_offset = instruction.word_offset;
+        result.error_opcode = instruction.opcode;
+        result.error = "GCN DWORD " + std::to_string(instruction.word_offset) + " opcode " +
+            std::to_string(instruction.opcode) + ": " + reason;
+        return false;
+    };
+    const auto& first = program.instructions.front();
+    std::vector<std::uint32_t> raw;
+    for (const auto& instruction : program.instructions) {
+        if (!instruction.word_count || instruction.word_count > 3 || raw.size() > max_shader_words - instruction.word_count)
+            return fail(instruction, "malformed decoded program");
+        raw.insert(raw.end(), instruction.raw.begin(), instruction.raw.begin() + instruction.word_count);
+    }
+    const auto verified = decode(raw);
+    if (!verified.diagnostic || verified.instructions.size() != program.instructions.size() || verified.word_count != program.word_count)
+        return fail(first, "decoded program is not a complete canonical instruction stream");
+    for (std::size_t i = 0; i < program.instructions.size(); ++i) {
+        const auto& supplied = program.instructions[i]; const auto& actual = verified.instructions[i];
+        if (supplied.encoding != actual.encoding || supplied.opcode != actual.opcode || supplied.word_offset != actual.word_offset ||
+            supplied.word_count != actual.word_count || supplied.has_literal != actual.has_literal || supplied.literal != actual.literal)
+            return fail(supplied, "decoded opcode or operand metadata does not match raw ISA");
+    }
+    if ((config.stage != Stage::Vertex && config.stage != Stage::Fragment) || !config.num_sgprs || config.num_sgprs > 104 ||
+        !config.num_vgprs || config.num_vgprs > 256 || config.num_user_sgprs > config.num_sgprs ||
+        config.user_sgpr_values.size() > config.num_user_sgprs || config.num_vertex_attribs > 16 ||
+        config.num_textures > 1 || config.num_samplers > 1)
+        return fail(first, "invalid or unsupported shader interface configuration");
+    if (config.num_vertex_attribs != config.vertex_components.size() ||
+        config.num_vertex_attribs != config.vertex_vgpr_bases.size())
+        return fail(first, "vertex attribute VGPR destinations/components must be explicit");
+    if (config.sampled_texture) {
+        const auto& binding = *config.sampled_texture;
+        if (binding.resource_sgpr_base % 4 || binding.sampler_sgpr_base % 4 ||
+            binding.resource_sgpr_base > config.num_sgprs || 8 > config.num_sgprs - binding.resource_sgpr_base ||
+            binding.sampler_sgpr_base > config.num_sgprs || 4 > config.num_sgprs - binding.sampler_sgpr_base)
+            return fail(first, "sampled texture descriptor SGPR ranges exceed allocation or alignment");
+    }
+    std::array<bool, 128> scalar{};
+    std::array<bool, 256> vector{};
+    for (std::size_t i = 0; i < config.user_sgpr_values.size(); ++i) scalar[i] = true;
+    if (config.stage == Stage::Vertex) {
+        vector[0] = true;
+        for (std::size_t i = 0; i < config.vertex_components.size(); ++i) {
+            const auto base = config.vertex_vgpr_bases[i], count = config.vertex_components[i];
+            if (!base || !count || count > 4 || base >= config.num_vgprs || count > config.num_vgprs - base)
+                return fail(first, "vertex input is outside allocated VGPRs");
+            for (std::uint32_t component = 0; component < count; ++component) {
+                if (vector[base + component]) return fail(first, "overlapping vertex attribute VGPR destinations");
+                vector[base + component] = true;
+            }
+        }
+    }
+    bool position{}, color{};
+    for (const auto& instruction : program.instructions) {
+        const auto word = instruction.raw[0];
+        const auto source = [&](std::uint32_t selector) {
+            if (selector >= 256) {
+                const auto index = selector - 256;
+                return index < config.num_vgprs && vector[index];
+            }
+            if (selector < 104) return selector < config.num_sgprs && scalar[selector];
+            if (selector == 106 || selector == 107) return scalar[selector];
+            return (selector >= 128 && selector <= 208) || (selector >= 240 && selector <= 247) ||
+                (selector == 255 && instruction.has_literal);
+        };
+        const auto read = [&](std::uint32_t selector) {
+            return source(selector) || fail(instruction, "undefined or unsupported source selector " + std::to_string(selector));
+        };
+        const auto write_scalar = [&](std::uint32_t destination) {
+            if ((destination < config.num_sgprs && destination < 104) || destination == 106 || destination == 107) {
+                scalar[destination] = true; return true;
+            }
+            return fail(instruction, "unsupported scalar destination (EXEC/wave state is not emulated)");
+        };
+        const auto write_vector = [&](std::uint32_t destination) {
+            if (destination >= config.num_vgprs) return fail(instruction, "destination VGPR is outside allocation");
+            vector[destination] = true; return true;
+        };
+        switch (instruction.encoding) {
+        case Encoding::sop1: {
+            const auto src = word & 255, dst = (word >> 16) & 127;
+            if (instruction.opcode == 3) {
+                if (!read(src) || !write_scalar(dst)) return false;
+            } else if (instruction.opcode == 4) {
+                if ((src & 1) || (dst & 1) || src >= 103 || dst >= config.num_sgprs - 1 ||
+                    !read(src) || !read(src + 1) || !write_scalar(dst) || !write_scalar(dst + 1))
+                    return fail(instruction, "S_MOV_B64 requires defined, aligned SGPR pairs");
+            } else return fail(instruction, "unsupported SOP1, including fetch/call and EXEC operations");
+            break;
+        }
+        case Encoding::sop2:
+            if (!one_of(instruction.opcode, {0,1,2,3,14,16,18,20,30,32,34,38}))
+                return fail(instruction, "unsupported SOP2");
+            if (!read(word & 255) || !read((word >> 8) & 255) || !write_scalar((word >> 16) & 127)) return false;
+            break;
+        case Encoding::sopk:
+            if (!one_of(instruction.opcode, {0,15})) return fail(instruction, "unsupported SOPK");
+            if (instruction.opcode == 15 && !read((word >> 16) & 127)) return false;
+            if (!write_scalar((word >> 16) & 127)) return false;
+            break;
+        case Encoding::sopc:
+            if (instruction.opcode > 11) return fail(instruction, "unsupported SOPC");
+            if (!read(word & 255) || !read((word >> 8) & 255)) return false;
+            break;
+        case Encoding::sopp:
+            if (!one_of(instruction.opcode, {0,1,12})) return fail(instruction, "control flow/barrier instruction is not lowered");
+            break;
+        case Encoding::vop1:
+            if (instruction.opcode == 0) break;
+            if (!one_of(instruction.opcode, {1,5,6,32,33,34,35,36,37,39,42,46,51,55}))
+                return fail(instruction, "unsupported VOP1");
+            if (!read(word & 511) || !write_vector((word >> 17) & 255)) return false;
+            break;
+        case Encoding::vop2:
+            if (!one_of(instruction.opcode, {3,4,5,8,15,16,21,22,23,24,25,26,27,28,29,31,32,33}))
+                return fail(instruction, "unsupported VOP2");
+            if (!read(word & 511) || !read(256 + ((word >> 9) & 255))) return false;
+            if (instruction.opcode == 31 && !read(256 + ((word >> 17) & 255))) return false;
+            if (!write_vector((word >> 17) & 255)) return false;
+            break;
+        case Encoding::vop3: {
+            if ((word & 0x1f000u) || !one_of(instruction.opcode, {259,260,261,264,271,272,321,331}))
+                return fail(instruction, "unsupported VOP3 opcode or reserved modifier bits");
+            const auto operands = instruction.raw[1];
+            if (!read(operands & 511) || !read((operands >> 9) & 511)) return false;
+            if ((instruction.opcode == 321 || instruction.opcode == 331) && !read((operands >> 18) & 511)) return false;
+            if (!write_vector(word & 255)) return false;
+            break;
+        }
+        case Encoding::mimg: {
+            if (config.stage != Stage::Fragment || instruction.opcode != 32 || word != 0xf0800f00u ||
+                !config.sampled_texture || config.num_textures != 1 || config.num_samplers != 1 ||
+                (instruction.raw[1] & 0xfc000000u)) return fail(instruction, "only explicitly bound 2D IMAGE_SAMPLE with full DMASK is supported");
+            const auto& binding = *config.sampled_texture;
+            if (((instruction.raw[1] >> 16) & 31) * 4 != binding.resource_sgpr_base ||
+                ((instruction.raw[1] >> 21) & 31) * 4 != binding.sampler_sgpr_base)
+                return fail(instruction, "IMAGE_SAMPLE resource/sampler SGPR bases do not match explicit binding");
+            const auto address = instruction.raw[1] & 255, destination = (instruction.raw[1] >> 8) & 255;
+            if (address >= 255 || destination > 252) return fail(instruction, "IMAGE_SAMPLE VGPR range overflows");
+            if (!read(256 + address) || !read(257 + address)) return false;
+            for (unsigned component = 0; component < 4; ++component) if (!write_vector(destination + component)) return false;
+            break;
+        }
+        case Encoding::exp: {
+            const auto target = (word >> 4) & 63;
+            if ((word & 15) != 15 || (word & 0x400u) || (word & 0x03ffe000u))
+                return fail(instruction, "partial/compressed or reserved EXP encoding is unsupported");
+            if (config.stage == Stage::Vertex && (target == 12 || (target >= 32 && target < 48))) {
+                if (target == 12) position = true;
+            } else if (config.stage == Stage::Fragment && target == 0) color = true;
+            else return fail(instruction, "unsupported EXP target");
+            for (unsigned component = 0; component < 4; ++component)
+                if (!read(256 + ((instruction.raw[1] >> (component * 8)) & 255))) return false;
+            break;
+        }
+        default: return fail(instruction, "instruction family requires unimplemented wave, LDS, interpolation or memory semantics");
+        }
+    }
+    if ((config.stage == Stage::Vertex && !position) || (config.stage == Stage::Fragment && !color))
+        return fail(program.instructions.back(), "shader does not write its required position/color output");
+    return true;
+}
+
 // Sea Islands (GCN 1.x) special register selectors in SRC0/SRC1 fields.
 constexpr std::uint32_t sel_vcc_lo       = 106;
 constexpr std::uint32_t sel_vcc_hi       = 107;
-constexpr std::uint32_t sel_exec_lo      = 126;
-constexpr std::uint32_t sel_exec_hi      = 127;
 constexpr std::uint32_t sel_zero         = 128;
 constexpr std::uint32_t sel_float_start  = 240;
 constexpr std::uint32_t sel_literal      = 255;
@@ -75,7 +249,6 @@ struct RegFile {
         if (selector < 104 && sgpr_vars[selector]) return b.op_load(u32, sgpr_vars[selector]);
         if (selector == sel_vcc_lo) return b.op_load(u32, vcc_lo_var);
         if (selector == sel_vcc_hi) return b.op_load(u32, vcc_hi_var);
-        if (selector == sel_exec_lo || selector == sel_exec_hi) return b.const_uint32(0xffffffffu);
         if (selector == sel_zero || selector == 128) return b.const_uint32(0);
         if (selector >= 129 && selector <= 192) return b.const_uint32(selector - 128); // 1..64
         if (selector >= 193 && selector <= 208) return b.const_uint32(static_cast<std::uint32_t>(-(static_cast<int>(selector) - 192))); // -1..-16
@@ -88,16 +261,16 @@ struct RegFile {
             std::memcpy(&bits, &val, 4);
             return b.const_uint32(bits); // Return as uint32 bitpattern for scalar regs
         }
-        return b.const_uint32(0); // fallback
+        throw std::logic_error("unsupported scalar selector escaped validation");
     }
 
-    // Load a vector source (returns f32 id). Selector 0..255 = VGPR, 256+ = scalar.
+    // Unified VALU selector: 0..255 scalar/constants, 256..511 VGPR.
     spirv::Id load_vsrc(std::uint32_t selector, std::uint32_t literal_value) {
         if (selector >= sel_vgpr_start) {
             auto vgpr_idx = selector - sel_vgpr_start;
             if (vgpr_idx < vgpr_vars.size() && vgpr_vars[vgpr_idx])
                 return b.op_load(f32, vgpr_vars[vgpr_idx]);
-            return b.const_float32(0.0f);
+            throw std::logic_error("unallocated VGPR escaped validation");
         }
         // Scalar source → bitcast to float.
         auto val = load_scalar(selector, literal_value);
@@ -108,19 +281,23 @@ struct RegFile {
     void store_sgpr(std::uint32_t idx, spirv::Id value) {
         if (idx < sgpr_vars.size() && sgpr_vars[idx])
             b.op_store(sgpr_vars[idx], value);
+        else if (idx == sel_vcc_lo) b.op_store(vcc_lo_var, value);
+        else if (idx == sel_vcc_hi) b.op_store(vcc_hi_var, value);
+        else throw std::logic_error("unsupported scalar destination escaped validation");
     }
 
     // Store to VGPR (value must be f32).
     void store_vgpr(std::uint32_t idx, spirv::Id value) {
         if (idx < vgpr_vars.size() && vgpr_vars[idx])
             b.op_store(vgpr_vars[idx], value);
+        else throw std::logic_error("unallocated VGPR destination escaped validation");
     }
 
     // Load VGPR as float.
     spirv::Id load_vgpr(std::uint32_t idx) {
         if (idx < vgpr_vars.size() && vgpr_vars[idx])
             return b.op_load(f32, vgpr_vars[idx]);
-        return b.const_float32(0.0f);
+        throw std::logic_error("unallocated VGPR source escaped validation");
     }
 };
 
@@ -138,12 +315,34 @@ ExportInfo decode_exp(const Instruction& inst) {
 
 } // namespace
 
+std::string cache_identity(const TranslateConfig& config) {
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << "sea-islands-strict-v3;spirv=1.5;vulkan=1.2;" << static_cast<int>(config.stage) << ';'
+        << config.num_sgprs << ';' << config.num_vgprs << ';' << config.num_user_sgprs << ';'
+        << config.num_vertex_attribs << ';' << config.num_textures << ';' << config.num_samplers << ';';
+    const auto vector = [&](const auto& values) {
+        out << values.size() << ':';
+        for (const auto value : values) out << value << ',';
+        out << ';';
+    };
+    vector(config.vertex_strides); vector(config.vertex_components); vector(config.vertex_vgpr_bases); vector(config.user_sgpr_values);
+    out << bool(config.sampled_texture) << ';';
+    if (config.sampled_texture) {
+        const auto& binding = *config.sampled_texture;
+        out << binding.resource_sgpr_base << ';' << binding.sampler_sgpr_base << ';' << binding.set << ';' << binding.binding << ';';
+    }
+    return out.str();
+}
+
 TranslateResult translate(const Program& program, const TranslateConfig& config) {
     TranslateResult result;
     if (program.instructions.empty() || !program.diagnostic) {
         result.error = "Invalid decoded GCN program";
         return result;
     }
+    if (!validate_subset(program, config, result)) return result;
+    try {
 
     spirv::Builder b;
     b.add_capability(spirv::Capability::Shader);
@@ -166,6 +365,7 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
     spirv::Id tex_sampler_var{};              // PS: sampler2D
 
     spirv::Id vertex_id_var{}; // VS built-in
+    spirv::Id sampled_image_type{};
 
     auto ptr_v4f_out = b.type_pointer(spirv::StorageClass::Output, regs.v4f);
     auto ptr_v4f_in  = b.type_pointer(spirv::StorageClass::Input, regs.v4f);
@@ -186,7 +386,7 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
         interface_vars.push_back(vertex_id_var);
 
         // Vertex attribute inputs.
-        auto num_attribs = std::max(config.num_vertex_attribs, 1u);
+        auto num_attribs = config.num_vertex_attribs;
         for (std::uint32_t i = 0; i < num_attribs; ++i) {
             auto components = (i < config.vertex_components.size()) ? config.vertex_components[i] : 4u;
             spirv::Id attrib_type;
@@ -203,7 +403,12 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
         }
 
         // Parameter exports (generic VS→PS outputs). Pre-allocate up to 16.
-        for (std::uint32_t i = 0; i < 16u; ++i) {
+        std::uint32_t parameter_count{};
+        for (const auto& instruction : program.instructions) if (instruction.encoding == Encoding::exp) {
+            const auto target = (instruction.raw[0] >> 4) & 63;
+            if (target >= 32 && target < 48) parameter_count = (std::max)(parameter_count, target - 31);
+        }
+        for (std::uint32_t i = 0; i < parameter_count; ++i) {
             auto var = b.variable(ptr_v4f_out, spirv::StorageClass::Output);
             b.decorate(var, spirv::Decoration::Location, i);
             param_output_vars.push_back(var);
@@ -216,22 +421,18 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
         b.decorate(frag_color_var, spirv::Decoration::Location, 0);
         interface_vars.push_back(frag_color_var);
 
-        // Interpolated inputs from VS parameters.
-        for (std::uint32_t i = 0; i < 16u; ++i) {
-            auto var = b.variable(ptr_v4f_in, spirv::StorageClass::Input);
-            b.decorate(var, spirv::Decoration::Location, i);
-            param_input_vars.push_back(var);
-            interface_vars.push_back(var);
-        }
-
         // Texture samplers.
-        if (config.num_textures > 0) {
+        if (std::any_of(program.instructions.begin(), program.instructions.end(), [](const auto& instruction) {
+                return instruction.encoding == Encoding::mimg;
+            })) {
             auto img_type = b.type_image(regs.f32, spirv::Dim::_2D, false, false, false, 1, spirv::ImageFormat::Unknown);
             auto sampled_type = b.type_sampled_image(img_type);
+            sampled_image_type = sampled_type;
             auto ptr_sampled = b.type_pointer(spirv::StorageClass::UniformConstant, sampled_type);
             tex_sampler_var = b.variable(ptr_sampled, spirv::StorageClass::UniformConstant);
-            b.decorate(tex_sampler_var, spirv::Decoration::DescriptorSet, 0);
-            b.decorate(tex_sampler_var, spirv::Decoration::Binding, 0);
+            const auto binding = config.sampled_texture.value_or(SampledTextureBinding{});
+            b.decorate(tex_sampler_var, spirv::Decoration::DescriptorSet, binding.set);
+            b.decorate(tex_sampler_var, spirv::Decoration::Binding, binding.binding);
             interface_vars.push_back(tex_sampler_var);
         }
     }
@@ -252,17 +453,19 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
 
     // Allocate register file as function-scope variables.
     regs.alloc_regs(config.num_sgprs, config.num_vgprs);
+    for (std::uint32_t i = 0; i < config.user_sgpr_values.size(); ++i)
+        regs.store_sgpr(i, b.const_uint32(config.user_sgpr_values[i]));
 
     // Load vertex attributes into VGPRs (hardware convention: v0=vertexId, v1..vN from fetch).
     if (config.stage == Stage::Vertex) {
         // v0 = vertex index (as float)
         auto vid = b.op_load(regs.u32, vertex_id_var);
-        auto vid_f = b.op_convert_u_to_f(regs.f32, vid);
+        auto vid_f = b.op_bitcast(regs.f32, vid);
         regs.store_vgpr(0, vid_f);
 
         // Load vertex attributes into consecutive VGPRs.
-        std::uint32_t vgpr = 1;
         for (std::uint32_t attr = 0; attr < vertex_input_vars.size(); ++attr) {
+            auto vgpr = config.vertex_vgpr_bases[attr];
             auto components = (attr < config.vertex_components.size()) ? config.vertex_components[attr] : 4u;
             if (components == 1) {
                 auto val = b.op_load(regs.f32, vertex_input_vars[attr]);
@@ -284,523 +487,184 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
                 regs.store_vgpr(vgpr++, b.op_composite_extract(regs.f32, val, 3));
             }
         }
-    } else {
-        // Fragment: load interpolated parameters into VGPRs.
-        // v0,v1 = FragCoord.xy (not loaded here, would require BuiltIn FragCoord).
-        // v2+ = interpolated attributes.
-        std::uint32_t vgpr = 2;
-        for (std::uint32_t i = 0; i < param_input_vars.size() && vgpr < 252; ++i) {
-            auto val = b.op_load(regs.v4f, param_input_vars[i]);
-            regs.store_vgpr(vgpr++, b.op_composite_extract(regs.f32, val, 0));
-            regs.store_vgpr(vgpr++, b.op_composite_extract(regs.f32, val, 1));
-            regs.store_vgpr(vgpr++, b.op_composite_extract(regs.f32, val, 2));
-            regs.store_vgpr(vgpr++, b.op_composite_extract(regs.f32, val, 3));
-        }
     }
 
-    // --- Translate instructions ---
+    const auto bool_t = b.type_bool();
+    const auto no_contraction = static_cast<spirv::Decoration>(42);
+    auto not_bool = [&](spirv::Id value) { return b.op_select(bool_t, value, b.const_bool(false), b.const_bool(true)); };
+    auto unfused_mad = [&](spirv::Id a, spirv::Id value_b, spirv::Id c) {
+        const auto product = b.op_fmul(regs.f32, a, value_b);
+        const auto sum = b.op_fadd(regs.f32, product, c);
+        b.decorate(product, no_contraction); b.decorate(sum, no_contraction);
+        return sum;
+    };
+    auto float_binary = [&](std::uint32_t opcode, spirv::Id a, spirv::Id value_b) -> spirv::Id {
+        switch (opcode) {
+        case 3: return b.op_fadd(regs.f32, a, value_b);
+        case 4: return b.op_fsub(regs.f32, a, value_b);
+        case 5: return b.op_fsub(regs.f32, value_b, a);
+        case 8: return b.op_fmul(regs.f32, a, value_b);
+        case 15: return b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMin, {a, value_b});
+        case 16: return b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMax, {a, value_b});
+        default: throw std::logic_error("unsupported float binary operation escaped validation");
+        }
+    };
     for (const auto& inst : program.instructions) {
+        const auto word = inst.raw[0];
         switch (inst.encoding) {
-
-        // ====================== SCALAR ALU ======================
         case Encoding::sop1: {
-            auto src0 = inst.raw[0] & 0xffu;
-            auto dst  = (inst.raw[0] >> 16) & 0x7fu;
-            auto val  = regs.load_scalar(src0, inst.literal);
-
-            switch (inst.opcode) {
-            case 3: // S_MOV_B32
-                regs.store_sgpr(dst, val);
-                break;
-            case 33: // S_MOV_B64 → store as pair
-                regs.store_sgpr(dst, val);
-                if (dst + 1 < 104) regs.store_sgpr(dst + 1, b.const_uint32(0));
-                break;
-            default: // Unsupported SOP1 → pass through as identity
-                regs.store_sgpr(dst, val);
-                break;
-            }
+            const auto src = word & 255, dst = (word >> 16) & 127;
+            const auto value = regs.load_scalar(src, inst.literal);
+            if (inst.opcode == 4) {
+                const auto upper = regs.load_scalar(src + 1, 0);
+                regs.store_sgpr(dst, value); regs.store_sgpr(dst + 1, upper);
+            } else regs.store_sgpr(dst, value);
             break;
         }
-
         case Encoding::sop2: {
-            auto src0 = inst.raw[0] & 0xffu;
-            auto src1 = (inst.raw[0] >> 8) & 0xffu;
-            auto dst  = (inst.raw[0] >> 16) & 0x7fu;
-            auto a = regs.load_scalar(src0, inst.literal);
-            auto a_s = b.op_bitcast(regs.i32, a);
-            auto b_val = regs.load_scalar(src1, inst.literal);
-            auto b_s = b.op_bitcast(regs.i32, b_val);
-
+            const auto a = regs.load_scalar(word & 255, inst.literal);
+            const auto value_b = regs.load_scalar((word >> 8) & 255, inst.literal);
+            const auto shift = b.op_bitwise_and(regs.u32, value_b, b.const_uint32(31));
+            spirv::Id value{};
             switch (inst.opcode) {
-            case 0: // S_ADD_U32
-                regs.store_sgpr(dst, b.op_iadd(regs.u32, a, b_val));
-                break;
-            case 1: // S_SUB_U32
-                regs.store_sgpr(dst, b.op_isub(regs.u32, a, b_val));
-                break;
-            case 2: // S_ADD_I32
-                regs.store_sgpr(dst, b.op_bitcast(regs.u32, b.op_iadd(regs.i32, a_s, b_s)));
-                break;
-            case 3: // S_SUB_I32
-                regs.store_sgpr(dst, b.op_bitcast(regs.u32, b.op_isub(regs.i32, a_s, b_s)));
-                break;
-            case 8:  // S_AND_B32
-                regs.store_sgpr(dst, b.op_bitwise_and(regs.u32, a, b_val));
-                break;
-            case 10: // S_OR_B32
-                regs.store_sgpr(dst, b.op_bitwise_or(regs.u32, a, b_val));
-                break;
-            case 12: // S_XOR_B32
-                regs.store_sgpr(dst, b.op_bitwise_xor(regs.u32, a, b_val));
-                break;
-            case 14: // S_ANDN2_B32
-                regs.store_sgpr(dst, b.op_bitwise_and(regs.u32, a, b.op_not(regs.u32, b_val)));
-                break;
-            case 22: // S_LSHL_B32
-                regs.store_sgpr(dst, b.op_shift_left(regs.u32, a, b_val));
-                break;
-            case 24: // S_LSHR_B32
-                regs.store_sgpr(dst, b.op_shift_right_logical(regs.u32, a, b_val));
-                break;
-            case 26: // S_ASHR_I32
-                regs.store_sgpr(dst, b.op_bitcast(regs.u32, b.op_shift_right_arithmetic(regs.i32, a_s, b_s)));
-                break;
-            case 36: // S_MUL_I32
-                regs.store_sgpr(dst, b.op_bitcast(regs.u32, b.op_imul(regs.i32, a_s, b_s)));
-                break;
-            default:
-                // Unsupported SOP2: store src0 as fallback.
-                regs.store_sgpr(dst, a);
-                break;
+            case 0: case 2: value = b.op_iadd(regs.u32, a, value_b); break;
+            case 1: case 3: value = b.op_isub(regs.u32, a, value_b); break;
+            case 14: value = b.op_bitwise_and(regs.u32, a, value_b); break;
+            case 16: value = b.op_bitwise_or(regs.u32, a, value_b); break;
+            case 18: value = b.op_bitwise_xor(regs.u32, a, value_b); break;
+            case 20: value = b.op_bitwise_and(regs.u32, a, b.op_not(regs.u32, value_b)); break;
+            case 30: value = b.op_shift_left(regs.u32, a, shift); break;
+            case 32: value = b.op_shift_right_logical(regs.u32, a, shift); break;
+            case 34: value = b.op_bitcast(regs.u32, b.op_shift_right_arithmetic(regs.i32, b.op_bitcast(regs.i32, a), shift)); break;
+            case 38: value = b.op_imul(regs.u32, a, value_b); break;
+            default: throw std::logic_error("unsupported SOP2 escaped validation");
             }
-            break;
+            regs.store_sgpr((word >> 16) & 127, value); break;
         }
-
         case Encoding::sopk: {
-            auto dst = (inst.raw[0] >> 16) & 0x7fu;
-            auto simm16 = static_cast<std::int16_t>(inst.raw[0] & 0xffffu);
-            std::uint32_t bits;
-            std::int32_t val32 = simm16;
-            std::memcpy(&bits, &val32, 4);
-
-            switch (inst.opcode) {
-            case 0: // S_MOVK_I32
-                regs.store_sgpr(dst, b.const_uint32(bits));
-                break;
-            case 15: // S_ADDK_I32
-            {
-                auto old = regs.load_scalar(dst, 0);
-                auto old_s = b.op_bitcast(regs.i32, old);
-                regs.store_sgpr(dst, b.op_bitcast(regs.u32, b.op_iadd(regs.i32, old_s, b.const_int32(simm16))));
-                break;
-            }
-            default: break;
-            }
-            break;
+            const auto dst = (word >> 16) & 127;
+            const auto immediate = (word & 65535) - ((word & 32768) ? 65536u : 0u);
+            auto value = b.const_uint32(immediate);
+            if (inst.opcode == 15) value = b.op_iadd(regs.u32, regs.load_scalar(dst, 0), value);
+            regs.store_sgpr(dst, value); break;
         }
-
         case Encoding::sopc: {
-            // Scalar comparison: sets SCC.
-            auto src0 = inst.raw[0] & 0xffu;
-            auto src1 = (inst.raw[0] >> 8) & 0xffu;
-            auto a = regs.load_scalar(src0, inst.literal);
-            auto b_val = regs.load_scalar(src1, inst.literal);
-            auto bool_t = b.type_bool();
-            spirv::Id cmp_result{};
-
-            switch (inst.opcode) {
-            case 0: cmp_result = b.op_iequal(bool_t, a, b_val); break;  // S_CMP_EQ_I32
-            case 1: // S_CMP_LG_I32
-                cmp_result = b.op_inotequal(bool_t, a, b_val); break;
-            case 2: // S_CMP_GT_I32
-                cmp_result = b.op_sless_than(bool_t, b_val, a); break;
-            case 3: // S_CMP_GE_I32
-            {   auto lt = b.op_sless_than(bool_t, a, b_val);
-                auto logical_not_id = b.next_id();
-                // Note: using LogicalNot
-                std::vector<std::uint32_t> ops = {bool_t, logical_not_id, lt};
-                // We can use op_select or add op_logical_not
-                cmp_result = b.op_select(bool_t, lt, b.const_bool(false), b.const_bool(true));
-                break;
-            }
-            case 4: // S_CMP_LT_I32
-                cmp_result = b.op_sless_than(bool_t, a, b_val); break;
-            case 6: // S_CMP_EQ_U32
-                cmp_result = b.op_iequal(bool_t, a, b_val); break;
-            case 7: // S_CMP_LG_U32
-                cmp_result = b.op_inotequal(bool_t, a, b_val); break;
-            default:
-                cmp_result = b.const_bool(false); break;
-            }
-
-            auto ptr_bool = b.type_pointer(spirv::StorageClass::Function, bool_t);
-            (void)ptr_bool;
-            b.op_store(regs.scc_var, cmp_result);
-            break;
-        }
-
-        case Encoding::sopp: {
-            // SOPP opcodes: most are control flow we handle as linear for now.
-            switch (inst.opcode) {
-            case 1:  break; // S_ENDPGM - handled below
-            case 12: break; // S_WAITCNT - no-op for translation
-            default: break; // S_BRANCH and conditional branches: linearize for now
-            }
-            break;
-        }
-
-        // ====================== VECTOR ALU ======================
-        case Encoding::vop1: {
-            auto src0 = inst.raw[0] & 0x1ffu;
-            auto dst  = (inst.raw[0] >> 17) & 0xffu;
-            auto val  = regs.load_vsrc(src0, inst.literal);
-
-            switch (inst.opcode) {
-            case 1:  // V_MOV_B32
-                regs.store_vgpr(dst, val);
-                break;
-            case 5:  // V_CVT_F32_I32
-            {
-                auto u = b.op_bitcast(regs.u32, val);
-                auto s = b.op_bitcast(regs.i32, u);
-                regs.store_vgpr(dst, b.op_convert_s_to_f(regs.f32, s));
-                break;
-            }
-            case 6:  // V_CVT_F32_U32
-            {
-                auto u = b.op_bitcast(regs.u32, val);
-                regs.store_vgpr(dst, b.op_convert_u_to_f(regs.f32, u));
-                break;
-            }
-            case 7:  // V_CVT_U32_F32
-            {
-                auto u = b.op_convert_f_to_u(regs.u32, val);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, u));
-                break;
-            }
-            case 8:  // V_CVT_I32_F32
-            {
-                auto s = b.op_convert_f_to_s(regs.i32, val);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, s));
-                break;
-            }
-            case 33: // V_RCP_F32 → 1.0/x
-            {
-                auto one = b.const_float32(1.0f);
-                regs.store_vgpr(dst, b.op_fdiv(regs.f32, one, val));
-                break;
-            }
-            case 34: // V_RCP_IFLAG_F32
-            {
-                auto one = b.const_float32(1.0f);
-                regs.store_vgpr(dst, b.op_fdiv(regs.f32, one, val));
-                break;
-            }
-            case 35: // V_RSQ_F32 → 1/sqrt(x)
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::InverseSqrt, {val}));
-                break;
-            case 37: // V_SQRT_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Sqrt, {val}));
-                break;
-            case 41: // V_EXP_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Exp2, {val}));
-                break;
-            case 42: // V_LOG_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Log2, {val}));
-                break;
-            case 51: // V_FRACT_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Fract, {val}));
-                break;
-            case 52: // V_TRUNC_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Trunc, {val}));
-                break;
-            case 53: // V_CEIL_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Ceil, {val}));
-                break;
-            case 54: // V_RNDNE_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Round, {val}));
-                break;
-            case 55: // V_FLOOR_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Floor, {val}));
-                break;
-            default:
-                regs.store_vgpr(dst, val);
-                break;
-            }
-            break;
-        }
-
-        case Encoding::vop2: {
-            auto src0 = inst.raw[0] & 0x1ffu;
-            auto src1_vgpr = (inst.raw[0] >> 9) & 0xffu;
-            auto dst = (inst.raw[0] >> 17) & 0xffu;
-            auto a = regs.load_vsrc(src0, inst.literal);
-            auto b_val = regs.load_vgpr(src1_vgpr);
-
-            switch (inst.opcode) {
-            case 1:  // V_MOV_B32 (VOP2 encoding variant)
-                regs.store_vgpr(dst, a); break;
-            case 3:  // V_ADD_F32
-                regs.store_vgpr(dst, b.op_fadd(regs.f32, a, b_val)); break;
-            case 4:  // V_SUB_F32
-                regs.store_vgpr(dst, b.op_fsub(regs.f32, a, b_val)); break;
-            case 5:  // V_SUBREV_F32
-                regs.store_vgpr(dst, b.op_fsub(regs.f32, b_val, a)); break;
-            case 8:  // V_MUL_F32
-                regs.store_vgpr(dst, b.op_fmul(regs.f32, a, b_val)); break;
-            case 9:  // V_MUL_I32_I24 (low 24 bits multiply)
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                auto res = b.op_imul(regs.u32, au, bu);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, res));
-                break;
-            }
-            case 16: // V_MAX_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMax, {a, b_val}));
-                break;
-            case 17: // V_MIN_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMin, {a, b_val}));
-                break;
-            case 25: // V_AND_B32
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, b.op_bitwise_and(regs.u32, au, bu)));
-                break;
-            }
-            case 26: // V_OR_B32
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, b.op_bitwise_or(regs.u32, au, bu)));
-                break;
-            }
-            case 27: // V_XOR_B32
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, b.op_bitwise_xor(regs.u32, au, bu)));
-                break;
-            }
-            case 32: // V_MADMK_F32 → a * K + b (K is literal)
-            {
-                float k;
-                std::memcpy(&k, &inst.literal, 4);
-                auto k_id = b.const_float32(k);
-                auto mul = b.op_fmul(regs.f32, a, k_id);
-                regs.store_vgpr(dst, b.op_fadd(regs.f32, mul, b_val));
-                break;
-            }
-            case 33: // V_MADAK_F32 → a * b + K
-            {
-                float k;
-                std::memcpy(&k, &inst.literal, 4);
-                auto k_id = b.const_float32(k);
-                auto mul = b.op_fmul(regs.f32, a, b_val);
-                regs.store_vgpr(dst, b.op_fadd(regs.f32, mul, k_id));
-                break;
-            }
-            case 46: // V_MAC_F32 → dst = a * b + dst
-            {
-                auto prev = regs.load_vgpr(dst);
-                auto mul = b.op_fmul(regs.f32, a, b_val);
-                regs.store_vgpr(dst, b.op_fadd(regs.f32, mul, prev));
-                break;
-            }
-            default:
-                regs.store_vgpr(dst, a);
-                break;
-            }
-            break;
-        }
-
-        case Encoding::vop3: {
-            // VOP3 has 64-bit encoding: raw[0] and raw[1].
-            auto src0 = inst.raw[1] & 0x1ffu;
-            auto src1 = (inst.raw[1] >> 9) & 0x1ffu;
-            auto src2 = (inst.raw[1] >> 18) & 0x1ffu;
-            auto dst  = (inst.raw[0] >> 17) & 0xffu;
-            auto neg  = (inst.raw[1] >> 29) & 0x7u;
-
-            auto load_and_neg = [&](std::uint32_t sel, std::uint32_t neg_bit) {
-                auto val = regs.load_vsrc(sel, inst.literal);
-                if (neg_bit) val = b.op_fnegate(regs.f32, val);
-                return val;
-            };
-
-            auto a = load_and_neg(src0, neg & 1);
-            auto b_val = load_and_neg(src1, neg & 2);
-            auto c = load_and_neg(src2, neg & 4);
-
-            switch (inst.opcode) {
-            case 256 + 3: // V_ADD_F32 (VOP3)
-                regs.store_vgpr(dst, b.op_fadd(regs.f32, a, b_val)); break;
-            case 256 + 4: // V_SUB_F32
-                regs.store_vgpr(dst, b.op_fsub(regs.f32, a, b_val)); break;
-            case 256 + 8: // V_MUL_F32
-                regs.store_vgpr(dst, b.op_fmul(regs.f32, a, b_val)); break;
-            case 256 + 16: // V_MAX_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMax, {a, b_val}));
-                break;
-            case 256 + 17: // V_MIN_F32
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMin, {a, b_val}));
-                break;
-            case 321: // V_MAD_F32 → a * b + c
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Fma, {a, b_val, c}));
-                break;
-            case 322: // V_MAD_I32_I24
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                auto cu = b.op_bitcast(regs.u32, c);
-                auto mul = b.op_imul(regs.u32, au, bu);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, b.op_iadd(regs.u32, mul, cu)));
-                break;
-            }
-            case 323: // V_MAD_U32_U24
-            {
-                auto au = b.op_bitcast(regs.u32, a);
-                auto bu = b.op_bitcast(regs.u32, b_val);
-                auto cu = b.op_bitcast(regs.u32, c);
-                auto mul = b.op_imul(regs.u32, au, bu);
-                regs.store_vgpr(dst, b.op_bitcast(regs.f32, b.op_iadd(regs.u32, mul, cu)));
-                break;
-            }
-            case 449: // V_MED3_F32 → clamp(a, min(b,c), max(b,c))
-            {
-                auto mn = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMin, {b_val, c});
-                auto mx = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FMax, {b_val, c});
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FClamp, {a, mn, mx}));
-                break;
-            }
-            default:
-                // Fallback: treat as MAD-like (a * b + c) for unknown VOP3.
-                regs.store_vgpr(dst, b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Fma, {a, b_val, c}));
-                break;
-            }
-            break;
-        }
-
-        case Encoding::vopc: {
-            auto src0 = inst.raw[0] & 0x1ffu;
-            auto src1_vgpr = (inst.raw[0] >> 9) & 0xffu;
-            auto a = regs.load_vsrc(src0, inst.literal);
-            auto b_val = regs.load_vgpr(src1_vgpr);
+            auto a = regs.load_scalar(word & 255, inst.literal);
+            auto value_b = regs.load_scalar((word >> 8) & 255, inst.literal);
+            const auto condition = inst.opcode % 6;
             spirv::Id cmp{};
+            if (condition < 2) cmp = condition ? b.op_inotequal(bool_t, a, value_b) : b.op_iequal(bool_t, a, value_b);
+            else {
+                if (inst.opcode >= 6) {
+                    a = b.op_bitwise_xor(regs.u32, a, b.const_uint32(0x80000000u));
+                    value_b = b.op_bitwise_xor(regs.u32, value_b, b.const_uint32(0x80000000u));
+                }
+                a = b.op_bitcast(regs.i32, a); value_b = b.op_bitcast(regs.i32, value_b);
+                if (condition == 2) cmp = b.op_sless_than(bool_t, value_b, a);
+                else if (condition == 3) cmp = not_bool(b.op_sless_than(bool_t, a, value_b));
+                else if (condition == 4) cmp = b.op_sless_than(bool_t, a, value_b);
+                else cmp = not_bool(b.op_sless_than(bool_t, value_b, a));
+            }
+            b.op_store(regs.scc_var, cmp); break;
+        }
+        case Encoding::sopp: break; // validated NOP, WAITCNT or final END only
+        case Encoding::vop1: {
+            if (!inst.opcode) break;
+            const auto value = regs.load_vsrc(word & 511, inst.literal);
+            const auto dst = (word >> 17) & 255;
+            spirv::Id output{};
             switch (inst.opcode) {
-            case 0:  cmp = b.const_bool(false); break; // V_CMP_F_F32
-            case 1:  cmp = b.op_ford_less_than(a, b_val); break;
-            case 2:  cmp = b.op_ford_equal(a, b_val); break;
-            case 3:  cmp = b.op_ford_less_than_equal(a, b_val); break;
-            case 4:  cmp = b.op_ford_greater_than(a, b_val); break;
-            case 6:  cmp = b.op_ford_greater_than_equal(a, b_val); break;
-            default: cmp = b.const_bool(false); break;
+            case 1: output = value; break;
+            case 5: output = b.op_convert_s_to_f(regs.f32, b.op_bitcast(regs.i32, value)); break;
+            case 6: output = b.op_convert_u_to_f(regs.f32, b.op_bitcast(regs.u32, value)); break;
+            case 32: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Fract, {value}); break;
+            case 33: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Trunc, {value}); break;
+            case 34: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Ceil, {value}); break;
+            case 35: output = b.ext_inst(regs.f32, glsl_ext, 2 /* RoundEven */, {value}); break;
+            case 36: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Floor, {value}); break;
+            case 37: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Exp2, {value}); break;
+            case 39: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Log2, {value}); break;
+            case 42: output = b.op_fdiv(regs.f32, b.const_float32(1.0f), value); break;
+            case 46: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::InverseSqrt, {value}); break;
+            case 51: output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Sqrt, {value}); break;
+            case 55: output = b.op_bitcast(regs.f32, b.op_not(regs.u32, b.op_bitcast(regs.u32, value))); break;
+            default: throw std::logic_error("unsupported VOP1 escaped validation");
             }
-
-            // Write result to VCC_LO (as uint32 0 or 1).
-            auto result_u32 = b.op_select(regs.u32, cmp, b.const_uint32(1), b.const_uint32(0));
-            b.op_store(regs.vcc_lo_var, result_u32);
-            break;
+            regs.store_vgpr(dst, output); break;
         }
-
-        // ====================== MEMORY ======================
-        case Encoding::smrd: {
-            // S_LOAD_DWORD etc. → load from constant buffer.
-            // For now, store 0 as placeholder since we don't have UBO bindings yet.
-            auto dst = (inst.raw[0] >> 15) & 0x7fu;
-            regs.store_sgpr(dst, b.const_uint32(0));
-            break;
+        case Encoding::vop2: {
+            const auto dst = (word >> 17) & 255;
+            const auto a = regs.load_vsrc(word & 511, inst.literal);
+            const auto value_b = regs.load_vgpr((word >> 9) & 255);
+            spirv::Id output{};
+            if (one_of(inst.opcode, {3,4,5,8,15,16})) output = float_binary(inst.opcode, a, value_b);
+            else if (one_of(inst.opcode, {31,32,33})) {
+                const auto literal = b.op_bitcast(regs.f32, b.const_uint32(inst.literal));
+                if (inst.opcode == 31) output = unfused_mad(a, value_b, regs.load_vgpr(dst));
+                else if (inst.opcode == 32) output = unfused_mad(a, literal, value_b);
+                else output = unfused_mad(a, value_b, literal);
+            } else {
+                auto integer_a = b.op_bitcast(regs.u32, a), integer_b = b.op_bitcast(regs.u32, value_b);
+                spirv::Id integer{};
+                if (inst.opcode >= 27) {
+                    if (inst.opcode == 27) integer = b.op_bitwise_and(regs.u32, integer_a, integer_b);
+                    else if (inst.opcode == 28) integer = b.op_bitwise_or(regs.u32, integer_a, integer_b);
+                    else integer = b.op_bitwise_xor(regs.u32, integer_a, integer_b);
+                } else {
+                    if ((inst.opcode & 1) == 0) std::swap(integer_a, integer_b);
+                    const auto shift = b.op_bitwise_and(regs.u32, integer_b, b.const_uint32(31));
+                    if (inst.opcode <= 22) integer = b.op_shift_right_logical(regs.u32, integer_a, shift);
+                    else if (inst.opcode <= 24) integer = b.op_bitcast(regs.u32,
+                        b.op_shift_right_arithmetic(regs.i32, b.op_bitcast(regs.i32, integer_a), shift));
+                    else integer = b.op_shift_left(regs.u32, integer_a, shift);
+                }
+                output = b.op_bitcast(regs.f32, integer);
+            }
+            regs.store_vgpr(dst, output); break;
         }
-
-        case Encoding::mubuf: {
-            // BUFFER_LOAD_FORMAT_* → load from vertex/storage buffer.
-            // We handle vertex fetch via the Input variables above, so these
-            // become identity operations on VGPRs that were pre-loaded.
-            break;
+        case Encoding::vop3: {
+            const auto operands = inst.raw[1];
+            const auto load_operand = [&](unsigned index) {
+                auto value = regs.load_vsrc((operands >> (index * 9)) & 511, 0);
+                if (word & (1u << (8 + index))) value = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FAbs, {value});
+                if (operands & (1u << (29 + index))) value = b.op_fnegate(regs.f32, value);
+                return value;
+            };
+            const auto a = load_operand(0), value_b = load_operand(1);
+            spirv::Id output{};
+            if (inst.opcode == 321) output = unfused_mad(a, value_b, load_operand(2));
+            else if (inst.opcode == 331) output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::Fma, {a, value_b, load_operand(2)});
+            else output = float_binary(inst.opcode - 256, a, value_b);
+            const auto modifier = (operands >> 27) & 3;
+            if (modifier) output = b.op_fmul(regs.f32, output, b.const_float32(modifier == 1 ? 2.0f : modifier == 2 ? 4.0f : 0.5f));
+            if (word & 0x800u) output = b.ext_inst(regs.f32, glsl_ext, spirv::GLSLstd450::FClamp,
+                {output, b.const_float32(0.0f), b.const_float32(1.0f)});
+            regs.store_vgpr(word & 255, output); break;
         }
-
-        case Encoding::mtbuf: {
-            // TBUFFER_LOAD_FORMAT → typed buffer load.
-            // Same as mubuf for now.
-            break;
-        }
-
         case Encoding::mimg: {
-            // IMAGE_SAMPLE → texture sampling.
-            if (inst.opcode == 0 && tex_sampler_var && config.stage == Stage::Fragment) {
-                auto vdata = (inst.raw[1] >> 8) & 0xffu;
-                auto vaddr = inst.raw[1] & 0xffu;
-
-                auto img_type = b.type_image(regs.f32, spirv::Dim::_2D, false, false, false, 1, spirv::ImageFormat::Unknown);
-                auto sampled_type = b.type_sampled_image(img_type);
-
-                auto tex = b.op_load(sampled_type, tex_sampler_var);
-                auto u = regs.load_vgpr(vaddr);
-                auto v = regs.load_vgpr(vaddr + 1);
-                auto coord = b.op_composite_construct(regs.v2f, {u, v});
-                auto sampled = b.op_image_sample_implicit(regs.v4f, tex, coord);
-
-                regs.store_vgpr(vdata,     b.op_composite_extract(regs.f32, sampled, 0));
-                regs.store_vgpr(vdata + 1, b.op_composite_extract(regs.f32, sampled, 1));
-                regs.store_vgpr(vdata + 2, b.op_composite_extract(regs.f32, sampled, 2));
-                regs.store_vgpr(vdata + 3, b.op_composite_extract(regs.f32, sampled, 3));
-            }
+            const auto destination = (inst.raw[1] >> 8) & 255, address = inst.raw[1] & 255;
+            const auto texture = b.op_load(sampled_image_type, tex_sampler_var);
+            const auto coordinate = b.op_composite_construct(regs.v2f, {regs.load_vgpr(address), regs.load_vgpr(address + 1)});
+            const auto sampled = b.op_image_sample_implicit(regs.v4f, texture, coordinate);
+            for (unsigned component = 0; component < 4; ++component)
+                regs.store_vgpr(destination + component, b.op_composite_extract(regs.f32, sampled, component));
+            const auto binding = *config.sampled_texture;
+            result.resources.push_back({ResourceSlot::Texture, binding.resource_sgpr_base, binding.binding, binding.set});
+            result.resources.push_back({ResourceSlot::Sampler, binding.sampler_sgpr_base, binding.binding, binding.set});
             break;
         }
-
-        // ====================== EXPORT ======================
         case Encoding::exp: {
-            auto info = decode_exp(inst);
-            result.exports.push_back(info);
-
-            // Source VGPRs from the second instruction word.
-            auto vsrc0 = inst.raw[1] & 0xffu;
-            auto vsrc1 = (inst.raw[1] >> 8) & 0xffu;
-            auto vsrc2 = (inst.raw[1] >> 16) & 0xffu;
-            auto vsrc3 = (inst.raw[1] >> 24) & 0xffu;
-
-            auto v0 = regs.load_vgpr(vsrc0);
-            auto v1 = regs.load_vgpr(vsrc1);
-            auto v2 = regs.load_vgpr(vsrc2);
-            auto v3 = regs.load_vgpr(vsrc3);
-            auto vec4 = b.op_composite_construct(regs.v4f, {v0, v1, v2, v3});
-
-            if (info.target >= 12 && info.target <= 15 && config.stage == Stage::Vertex) {
-                // Position export (pos0..pos3: 12..15 in GCN ISA).
-                b.op_store(position_var, vec4);
-            } else if (info.target >= 32 && info.target <= 63 && config.stage == Stage::Vertex) {
-                // Parameter export (param0..param31: 32..63 in GCN ISA).
-                auto param_idx = static_cast<std::size_t>(info.target - 32);
-                if (param_idx < param_output_vars.size())
-                    b.op_store(param_output_vars[param_idx], vec4);
-            } else if (info.target <= 7 && config.stage == Stage::Fragment) {
-                // MRT export (mrt0..mrt7: 0..7 in GCN ISA).
-                b.op_store(frag_color_var, vec4);
-            }
+            const auto info = decode_exp(inst); result.exports.push_back(info);
+            std::vector<spirv::Id> components;
+            for (unsigned component = 0; component < 4; ++component)
+                components.push_back(regs.load_vgpr((inst.raw[1] >> (component * 8)) & 255));
+            const auto value = b.op_composite_construct(regs.v4f, components);
+            if (config.stage == Stage::Fragment) b.op_store(frag_color_var, value);
+            else if (info.target == 12) b.op_store(position_var, value);
+            else b.op_store(param_output_vars[info.target - 32], value);
             break;
         }
-
-        // ====================== INTERPOLATION ======================
-        case Encoding::vintrp: {
-            // V_INTERP_P1_F32 / V_INTERP_P2_F32 / V_INTERP_MOV_F32
-            // The PS inputs are already loaded from interpolated varyings.
-            // These instructions adjust interpolation at pixel centers.
-            // For now, the VGPRs are pre-loaded; these become identity ops.
-            auto dst = (inst.raw[0] >> 18) & 0xffu;
-            auto attr = (inst.raw[0] >> 10) & 0x3fu;
-            auto chan = (inst.raw[0] >> 8) & 0x3u;
-
-            // The input param for this attribute should already be in vgpr 2 + attr*4 + chan.
-            auto src_vgpr = 2 + attr * 4 + chan;
-            auto val = regs.load_vgpr(src_vgpr);
-            regs.store_vgpr(dst, val);
-            break;
-        }
-
-        case Encoding::ds: break; // LDS: not needed for basic rendering
-        default: break;
+        default: throw std::logic_error("unimplemented instruction family escaped validation");
         }
     }
 
@@ -809,8 +673,16 @@ TranslateResult translate(const Program& program, const TranslateConfig& config)
     b.end_function();
 
     result.spirv = b.finalize();
-    result.success = !result.spirv.empty() && result.spirv.size() >= 5;
+    if (!validate_spirv(result.spirv, result.error)) {
+        result.spirv.clear(); return result;
+    }
+    result.success = true;
     return result;
+    } catch (const std::exception& error) {
+        result.spirv.clear(); result.exports.clear(); result.resources.clear();
+        result.error = std::string("GCN lowering failed: ") + error.what();
+        return result;
+    }
 }
 
 } // namespace gravity::hle::gnm::gcn

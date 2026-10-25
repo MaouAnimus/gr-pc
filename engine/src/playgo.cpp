@@ -4,6 +4,7 @@
 #include <mutex>
 #include <cstring>
 #include <unordered_set>
+#include <vector>
 
 namespace gravity::hle::playgo {
 
@@ -105,14 +106,18 @@ GRAVITY_SYSV_ABI std::int32_t scePlayGoSetInstallSpeed(std::int32_t handle, std:
     return SCE_PLAYGO_OK;
 }
 
-GRAVITY_SYSV_ABI std::int32_t scePlayGoGetLocus(std::int32_t handle, std::uint32_t chunk_id, std::uint32_t* out_locus) {
-    (void)handle; (void)chunk_id;
-    if (!out_locus) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
+GRAVITY_SYSV_ABI std::int32_t scePlayGoGetLocus(
+    std::int32_t handle, const std::uint16_t* chunk_ids, std::uint32_t count, std::uint8_t* out_locus) {
+    (void)handle;
+    (void)chunk_ids;
+    if (!out_locus || count == 0) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
+    if (!guest_memory::accessible(out_locus, count, true)) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
 
-    const std::uint32_t locus = SCE_PLAYGO_LOCUS_LOCAL; // Always locally available
-    if (!guest_memory::write(out_locus, &locus, sizeof(locus))) {
+    std::vector<std::uint8_t> loci(count, static_cast<std::uint8_t>(SCE_PLAYGO_LOCUS_LOCAL));
+    if (!guest_memory::write(out_locus, loci.data(), count)) {
         return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
     }
+    std::fprintf(stderr, "[PlayGo] GetLocus: returned %u chunks as LOCAL (%u)\n", count, SCE_PLAYGO_LOCUS_LOCAL);
     return SCE_PLAYGO_OK;
 }
 

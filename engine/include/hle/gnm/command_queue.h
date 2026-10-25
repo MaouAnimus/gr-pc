@@ -39,6 +39,9 @@ struct NativeDraw {
     VkBool32 depth_test_enable{VK_FALSE};
     VkBool32 depth_write_enable{VK_FALSE};
     VkCompareOp depth_compare_op{VK_COMPARE_OP_LESS_OR_EQUAL};
+    // Immutable per-draw uploads. The recording ticket retains every owner
+    // until the caller retires the successful submission's fence slot.
+    std::shared_ptr<void> resources{};
 };
 using DrawResolver=std::function<bool(const GraphicsState&,const DrawRequest&,NativeDraw&)>;
 struct QueueStats {
@@ -46,7 +49,17 @@ struct QueueStats {
     std::size_t pending{}, pending_words{};
 };
 class CommandQueue;
-struct RecordingTicket { std::uint64_t id{}; const CommandQueue* owner{}; };
+struct RecordingTicket {
+    std::uint64_t id{};
+    const CommandQueue* owner{};
+    // On successful submit, move this into the submission's fence slot BEFORE
+    // acknowledge(). Release that slot only after its GPU fence completes.
+    std::shared_ptr<void> resources{};
+
+    constexpr RecordingTicket() = default;
+    constexpr RecordingTicket(std::uint64_t ticket_id, const CommandQueue* queue_owner = nullptr, std::shared_ptr<void> res = {})
+        : id(ticket_id), owner(queue_owner), resources(std::move(res)) {}
+};
 class CommandQueue {
 public:
     explicit CommandQueue(std::size_t max_batches=64,std::size_t max_words=4U<<20);
@@ -68,6 +81,7 @@ private:
     struct PendingRecording {
         std::uint64_t id{}; std::size_t batches{}; std::uint64_t draws{};
         std::shared_ptr<GraphicsState> state;
+        std::shared_ptr<void> resources;
     };
     mutable std::mutex mutex_;
     std::deque<Batch> batches_;

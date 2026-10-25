@@ -1,4 +1,7 @@
 #include "hle/runner/runner.h"
+#include "hle/guest_memory.h"
+#include "hle/kernel/pthread.h"
+#include "hle/kernel/sema.h"
 #include <Windows.h>
 #include <sstream>
 #include <iomanip>
@@ -48,6 +51,7 @@ CrashReason map_exception_code(DWORD code, ULONG_PTR access_type) {
         return CrashReason::unknown;
     }
 }
+} // namespace
 
 void resolve_address_module(uintptr_t ip, const RunnerConfig& config,
                             std::string& out_module, uintptr_t& out_offset) {
@@ -75,6 +79,8 @@ void resolve_address_module(uintptr_t ip, const RunnerConfig& config,
     out_module = "unknown_module";
     out_offset = ip;
 }
+
+namespace {
 
 LONG WINAPI runner_vectored_exception_handler(PEXCEPTION_POINTERS p_info) {
     auto* ctx = g_active_context;
@@ -133,6 +139,22 @@ LONG WINAPI runner_vectored_exception_handler(PEXCEPTION_POINTERS p_info) {
         ctx->report.registers.r14 = crec->R14;
         ctx->report.registers.r15 = crec->R15;
         ctx->report.registers.eflags = crec->EFlags;
+
+        std::fprintf(stderr, "[Runner] Stack dump (RSP=%p):\n", reinterpret_cast<void*>(crec->Rsp));
+        const auto* sp = reinterpret_cast<const std::uintptr_t*>(crec->Rsp);
+        for (std::size_t i = 0; i < 64; ++i) {
+            if (guest_memory::accessible(sp + i, sizeof(std::uintptr_t))) {
+                std::uintptr_t val = sp[i];
+                std::string mod;
+                std::uintptr_t off = 0;
+                resolve_address_module(val, ctx->config, mod, off);
+                std::fprintf(stderr, "  [+0x%02zx] 0x%016llx (%s+0x%llx)\n",
+                             i * sizeof(std::uintptr_t),
+                             static_cast<unsigned long long>(val),
+                             mod.c_str(),
+                             static_cast<unsigned long long>(off));
+            }
+        }
     }
 
     std::ostringstream ss;
@@ -273,7 +295,7 @@ ExecutionReport execute_isolated_sysv(
 
     const auto start = std::chrono::steady_clock::now();
 
-    HANDLE h_thread = CreateThread(nullptr, 0, guest_worker_thread, &ctx, 0, nullptr);
+    HANDLE h_thread = CreateThread(nullptr, 0, guest_worker_thread, &ctx, 0, &ctx.thread_id);
     if (!h_thread) {
         ctx.report.succeeded = false;
         ctx.report.crash_reason = CrashReason::unknown;
@@ -294,6 +316,38 @@ ExecutionReport execute_isolated_sysv(
 
     if (wait_res == WAIT_TIMEOUT && config.timeout_ms > 0) {
         if (config.terminate_process_on_timeout) {
+            CONTEXT thread_ctx{};
+            thread_ctx.ContextFlags = CONTEXT_ALL;
+            SuspendThread(h_thread);
+            if (GetThreadContext(h_thread, &thread_ctx)) {
+                std::fprintf(stderr, "[Timeout Main Thread] TID=0x%lx RIP=0x%llx (guest+0x%llx) RSP=0x%llx RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx RSI=0x%llx RDI=0x%llx\n",
+                             static_cast<unsigned long>(ctx.thread_id),
+                             static_cast<unsigned long long>(thread_ctx.Rip),
+                             static_cast<unsigned long long>(thread_ctx.Rip >= 0x1000000000ULL ? thread_ctx.Rip - 0x1000000000ULL : 0),
+                             static_cast<unsigned long long>(thread_ctx.Rsp),
+                             static_cast<unsigned long long>(thread_ctx.Rax),
+                             static_cast<unsigned long long>(thread_ctx.Rbx),
+                             static_cast<unsigned long long>(thread_ctx.Rcx),
+                             static_cast<unsigned long long>(thread_ctx.Rdx),
+                             static_cast<unsigned long long>(thread_ctx.Rsi),
+                             static_cast<unsigned long long>(thread_ctx.Rdi));
+                for (int i = 0; i < 64; ++i) {
+                    uintptr_t stack_val = 0;
+                    if (guest_memory::read(reinterpret_cast<const void*>(thread_ctx.Rsp + i * 8), &stack_val, sizeof(stack_val))) {
+                        if (!stack_val) continue;
+                        std::string mod;
+                        uintptr_t off = 0;
+                        resolve_address_module(stack_val, config, mod, off);
+                        if (mod == "unknown_module") continue;
+                        std::fprintf(stderr, "  [Stack+%03d] 0x%llx (%s+0x%llx)\n", i * 8,
+                                     static_cast<unsigned long long>(stack_val),
+                                     mod.c_str(),
+                                     static_cast<unsigned long long>(off));
+                    }
+                }
+            }
+            gravity::hle::pthread::dump_threads();
+            gravity::hle::sema::dump_semaphores();
             ExecutionReport timeout_report;
             timeout_report.crash_reason = CrashReason::timeout;
             timeout_report.execution_time = elapsed;

@@ -24,6 +24,7 @@
 #include "hle/avplayer/avplayer.h"
 #include "hle/audio/ngs2.h"
 #include "hle/audio/audio3d.h"
+#include "hle/np/np.h"
 #include "hle/guest_memory.h"
 #include <ctime>
 #include <windows.h>
@@ -37,6 +38,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <mutex>
+#include <algorithm>
 
 namespace gravity::hle {
 
@@ -208,9 +210,19 @@ extern "C" GRAVITY_SYSV_ABI void* hle_realloc(void* ptr, std::size_t size) {
 
 // Memory operations
 extern "C" GRAVITY_SYSV_ABI void* hle_memcpy(void* dest, const void* src, std::size_t n) {
+    if (!guest_memory::accessible(dest, n, true) || !guest_memory::accessible(src, n, false)) {
+        void* caller = __builtin_return_address(0);
+        std::fprintf(stderr, "[CRITICAL] hle_memcpy invalid: dest=%p src=%p n=%zu caller=%p\n",
+                     dest, src, n, caller);
+    }
     return std::memcpy(dest, src, n);
 }
 extern "C" GRAVITY_SYSV_ABI void* hle_memset(void* dest, int c, std::size_t n) {
+    if (!guest_memory::accessible(dest, n, true)) {
+        void* caller = __builtin_return_address(0);
+        std::fprintf(stderr, "[CRITICAL] hle_memset invalid buffer: dest=%p c=0x%x n=%zu (0x%zx) caller=%p\n",
+                     dest, c, n, n, caller);
+    }
     return std::memset(dest, c, n);
 }
 extern "C" GRAVITY_SYSV_ABI int hle_memcmp(const void* s1, const void* s2, std::size_t n) {
@@ -251,6 +263,10 @@ extern "C" GRAVITY_SYSV_ABI const char* hle_strrchr(const char* s, int c) {
 extern "C" GRAVITY_SYSV_ABI const char* hle_strstr(const char* haystack, const char* needle) {
     return std::strstr(haystack, needle);
 }
+extern "C" GRAVITY_SYSV_ABI std::size_t hle_strftime(char* s, std::size_t max, const char* format, const struct tm* tm) {
+    if (!s || max == 0 || !format || !tm) return 0;
+    return std::strftime(s, max, format, tm);
+}
 
 // I/O & Formatting (Bridged without va_start to avoid Windows x64 SysV ABI conflict)
 extern "C" GRAVITY_SYSV_ABI int hle_puts(const char* str) {
@@ -288,7 +304,9 @@ extern "C" GRAVITY_SYSV_ABI int hle_printf(const char* format,
                                            uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                            uint64_t a5, uint64_t a6) {
     if (!format) return 0;
-    return std::printf(format, a1, a2, a3, a4, a5, a6);
+    int res = std::printf(format, a1, a2, a3, a4, a5, a6);
+    std::fflush(stdout);
+    return res;
 }
 extern "C" GRAVITY_SYSV_ABI int hle_sscanf(const char* s, const char* format,
                                            void* a1, void* a2, void* a3, void* a4) {
@@ -380,13 +398,21 @@ extern "C" GRAVITY_SYSV_ABI int hle_sceSysmoduleLoadModule(uint32_t id) {
     case 0x0003: // SSL
     case 0x0006: // FONT / FONT_FT
     case 0x0009: // NET
+    case 0x000b: // NGS2
+    case 0x000c: // AUDIO3D
     case 0x0013: // HTTP
     case 0x0014: // SSL
+    case 0x001e: // NP_UTILITY
     case 0x0083: // VOICE
     case 0x009a: // SAVE_DATA_DIALOG
     case 0x009c: // SAVEDATA
     case 0x00a0: // NP_SCORE
+    case 0x00a4: // NP_MATCHING2
     case 0x00a5: // FIBER
+    case 0x00a7: // AUDIO3D
+    case 0x00ac: // NP_SNS
+    case 0x00ad: // NP_COMMERCE
+    case 0x00b2: // NP_TUS
         {
             std::lock_guard<std::mutex> lock(g_sysmodule_mutex);
             g_loaded_sysmodules.insert(id);
@@ -438,14 +464,43 @@ extern "C" GRAVITY_SYSV_ABI int hle_rand() {
 extern "C" GRAVITY_SYSV_ABI void hle_srand(unsigned int seed) {
     std::srand(seed);
 }
+using SysVComparator = int(GRAVITY_SYSV_ABI*)(const void*, const void*);
+
 extern "C" GRAVITY_SYSV_ABI void hle_qsort(void* base, std::size_t num, std::size_t size,
-                                           int (*compar)(const void*, const void*)) {
-    std::qsort(base, num, size, compar);
+                                           SysVComparator compar) {
+    if (!base || num <= 1 || !size || !compar) return;
+    char* bytes = static_cast<char*>(base);
+    std::vector<std::size_t> indices(num);
+    for (std::size_t i = 0; i < num; ++i) indices[i] = i;
+    std::stable_sort(indices.begin(), indices.end(), [&](std::size_t a, std::size_t b) {
+        return compar(bytes + a * size, bytes + b * size) < 0;
+    });
+    std::vector<char> copy(num * size);
+    std::memcpy(copy.data(), bytes, num * size);
+    for (std::size_t i = 0; i < num; ++i) {
+        std::memcpy(bytes + i * size, copy.data() + indices[i] * size, size);
+    }
 }
 extern "C" GRAVITY_SYSV_ABI void* hle_bsearch(const void* key, const void* base,
                                               std::size_t num, std::size_t size,
-                                              int (*compar)(const void*, const void*)) {
-    return std::bsearch(key, base, num, size, compar);
+                                              SysVComparator compar) {
+    if (!key || !base || !size || !compar) return nullptr;
+    const char* bytes = static_cast<const char*>(base);
+    std::size_t low = 0;
+    std::size_t high = num;
+    while (low < high) {
+        const std::size_t mid = low + (high - low) / 2;
+        const void* elem = bytes + (mid * size);
+        const int cmp = compar(key, elem);
+        if (cmp < 0) {
+            high = mid;
+        } else if (cmp > 0) {
+            low = mid + 1;
+        } else {
+            return const_cast<void*>(elem);
+        }
+    }
+    return nullptr;
 }
 
 // Standard Math
@@ -502,6 +557,19 @@ extern "C" GRAVITY_SYSV_ABI uint64_t hle_sceKernelGetTscFrequency() {
 }
 
 extern "C" GRAVITY_SYSV_ABI int32_t hle_sceKernelUsleep(uint32_t useconds) {
+    if (useconds >= 10000) {
+        static std::atomic<unsigned> main_loop_sleeps{0};
+        if (main_loop_sleeps.fetch_add(1) < 5) {
+            std::fprintf(stderr, "[Kernel] MainLoop sceKernelUsleep(%u us) caller=%p tid=0x%lx\n",
+                         useconds, __builtin_return_address(0), static_cast<unsigned long>(GetCurrentThreadId()));
+        }
+    } else {
+        static std::atomic<unsigned> sleep_calls{0};
+        if (sleep_calls.fetch_add(1) < 5) {
+            std::fprintf(stderr, "[Kernel] sceKernelUsleep(%u us) from thread 0x%lx caller %p\n",
+                         useconds, static_cast<unsigned long>(GetCurrentThreadId()), __builtin_return_address(0));
+        }
+    }
     timing::sleep_microseconds(useconds);
     return 0;
 }
@@ -685,6 +753,11 @@ extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadOpen(int32_t userId, int32_t type,
     return 1;
 }
 extern "C" GRAVITY_SYSV_ABI int32_t hle_scePadRead(int32_t handle, void* data, int32_t count) {
+    static std::atomic<unsigned> read_calls{0};
+    if (read_calls.fetch_add(1) < 5) {
+        std::fprintf(stderr, "[Pad] scePadRead(handle=%d, count=%d) caller=%p tid=0x%lx\n",
+                     handle, count, __builtin_return_address(0), static_cast<unsigned long>(GetCurrentThreadId()));
+    }
     if (!data || count <= 0 || handle <= 0) return -1;
     return pad::readPadData(handle, reinterpret_cast<pad::OrbisPadData*>(data), count);
 }
@@ -1025,7 +1098,7 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("6sJWiWSRuqk", "libc", "strncpy", reinterpret_cast<uintptr_t>(&hle_strncpy));
     register_adapter("KuOuD58hqn4", "libc", "strcmp", reinterpret_cast<uintptr_t>(&hle_strcmp));
     register_adapter("Ovb2dSJOAuE", "libc", "strcmp", reinterpret_cast<uintptr_t>(&hle_strcmp));
-    register_adapter("Av3zjWi64Kw", "libc", "strncmp", reinterpret_cast<uintptr_t>(&hle_strncmp));
+    register_adapter("Av3zjWi64Kw", "libc", "strftime", reinterpret_cast<uintptr_t>(&hle_strftime));
     register_adapter("aesyjrHVWy4", "libc", "strncmp", reinterpret_cast<uintptr_t>(&hle_strncmp));
     register_adapter("Ls4tzzhimqQ", "libc", "strcat", reinterpret_cast<uintptr_t>(&hle_strcat));
     register_adapter("kHg45qPC6f0", "libc", "strncat", reinterpret_cast<uintptr_t>(&hle_strncat));
@@ -1720,6 +1793,265 @@ void AdapterRegistry::initialize_builtin_adapters() {
     register_adapter("jO2tec4dJ2M", "libSceAudio3d", "sceAudio3dObjectReserve", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectReserve));
     register_adapter("1HXxo-+1qCw", "libSceAudio3d", "sceAudio3dObjectUnreserve", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectUnreserve));
     register_adapter("4uyHN9q4ZeU", "libSceAudio3d", "sceAudio3dObjectSetAttributes", reinterpret_cast<uintptr_t>(&audio::sceAudio3dObjectSetAttributes));
+
+    // ---------------------------------------------------------------------
+    // 28. libSceNpManager, Dialogs, Net, Trophy
+    // ---------------------------------------------------------------------
+    // libSceNpManager
+    register_adapter("Ec63y59l9tw", "libSceNpManager", "sceNpSetNpTitleId", reinterpret_cast<uintptr_t>(&np::sceNpSetNpTitleId));
+    register_adapter("A2CQ3kgSopQ", "libSceNpManager", "sceNpSetContentRestriction", reinterpret_cast<uintptr_t>(&np::sceNpSetContentRestriction));
+    register_adapter("XDncXQIJUSk", "libSceNpManager", "sceNpGetOnlineId", reinterpret_cast<uintptr_t>(&np::sceNpGetOnlineId));
+    register_adapter("GpLQDNKICac", "libSceNpManager", "sceNpCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpCreateRequest));
+    register_adapter("S7QTn72PrDw", "libSceNpManager", "sceNpDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpDeleteRequest));
+    register_adapter("2rsFmlGWleQ", "libSceNpManager", "sceNpCheckNpAvailability", reinterpret_cast<uintptr_t>(&np::sceNpCheckNpAvailability));
+    register_adapter("3Zl8BePTh9Y", "libSceNpManager", "sceNpCheckCallback", reinterpret_cast<uintptr_t>(&np::sceNpCheckCallback));
+    register_adapter("eQH7nWPcAgc", "libSceNpManager", "sceNpGetState", reinterpret_cast<uintptr_t>(&np::sceNpGetState));
+    register_adapter("p-o74CnoNzY", "libSceNpManager", "sceNpGetNpId", reinterpret_cast<uintptr_t>(&np::sceNpGetNpId));
+    register_adapter("VfRSmPmj8Q8", "libSceNpManager", "sceNpRegisterStateCallback", reinterpret_cast<uintptr_t>(&np::sceNpRegisterStateCallback));
+    register_adapter("mjjTXh+NHWY", "libSceNpManager", "sceNpUnregisterStateCallback", reinterpret_cast<uintptr_t>(&np::sceNpUnregisterStateCallback));
+    register_adapter("GFhVUpRmbHE", "libSceNpManager", "sceNpPollAsync", reinterpret_cast<uintptr_t>(&np::sceNpPollAsync));
+    register_adapter("bMG3cVmUmuk", "libSceNpManager", "sceNpWaitAsync", reinterpret_cast<uintptr_t>(&np::sceNpWaitAsync));
+    register_adapter("+anuSx2avHQ", "libSceNpManager", "sceNpManagerGetParentalControlInfo", reinterpret_cast<uintptr_t>(&np::sceNpManagerGetParentalControlInfo));
+    register_adapter("s4UEa5iBJdc", "libSceNpManager", "sceNpGetNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpGetNpTitleCtx));
+    register_adapter("Vh1bhUG6mSs", "libSceNpManager", "sceNpRegisterNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpRegisterNpTitleCtx));
+    register_adapter("ON7Sf5XEMmI", "libSceNpManager", "sceNpUnregisterNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpUnregisterNpTitleCtx));
+
+    // libSceCommonDialog
+    register_adapter("uoUpLGNkygk", "libSceCommonDialog", "sceCommonDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceCommonDialogInitialize));
+
+    // libSceMsgDialog
+    register_adapter("lDqxaY1UbEo", "libSceMsgDialog", "sceMsgDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceMsgDialogInitialize));
+    register_adapter("b06Hh0DPEaE", "libSceMsgDialog", "sceMsgDialogOpen", reinterpret_cast<uintptr_t>(&np::sceMsgDialogOpen));
+    register_adapter("6fIC3XKt2k0", "libSceMsgDialog", "sceMsgDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceMsgDialogUpdateStatus));
+    register_adapter("Lr8ovHH9l6A", "libSceMsgDialog", "sceMsgDialogGetResult", reinterpret_cast<uintptr_t>(&np::sceMsgDialogGetResult));
+    register_adapter("ePw-kqZmelo", "libSceMsgDialog", "sceMsgDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceMsgDialogTerminate));
+
+    // libSceErrorDialog
+    register_adapter("WWiGuh9XfgQ", "libSceErrorDialog", "sceErrorDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceErrorDialogInitialize));
+    register_adapter("9XAxK2PMwk8", "libSceErrorDialog", "sceErrorDialogOpen", reinterpret_cast<uintptr_t>(&np::sceErrorDialogOpen));
+    register_adapter("I88KChlynSs", "libSceErrorDialog", "sceErrorDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceErrorDialogUpdateStatus));
+    register_adapter("M2ZF-ClLhgY", "libSceErrorDialog", "sceErrorDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceErrorDialogTerminate));
+
+    // libSceGameCustomDataDialog
+    register_adapter("xtbb-2f703A", "libSceGameCustomDataDialog", "sceGameCustomDataDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceGameCustomDataDialogInitialize));
+    register_adapter("5TvttyRuU84", "libSceGameCustomDataDialog", "sceGameCustomDataDialogOpen", reinterpret_cast<uintptr_t>(&np::sceGameCustomDataDialogOpen));
+    register_adapter("HwEtHFCpU5U", "libSceGameCustomDataDialog", "sceGameCustomDataDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceGameCustomDataDialogUpdateStatus));
+    register_adapter("PkdLsRA4ON0", "libSceGameCustomDataDialog", "sceGameCustomDataDialogGetResult", reinterpret_cast<uintptr_t>(&np::sceGameCustomDataDialogGetResult));
+    register_adapter("sJptZwvs1is", "libSceGameCustomDataDialog", "sceGameCustomDataDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceGameCustomDataDialogTerminate));
+
+    // libSceInvitationDialog
+    register_adapter("XvA5KS56wcs", "libSceInvitationDialog", "sceInvitationDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceInvitationDialogInitialize));
+    register_adapter("0zU0G+wiVLA", "libSceInvitationDialog", "sceInvitationDialogOpen", reinterpret_cast<uintptr_t>(&np::sceInvitationDialogOpen));
+    register_adapter("B6HVJtDYxEE", "libSceInvitationDialog", "sceInvitationDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceInvitationDialogUpdateStatus));
+    register_adapter("9+g9iOq+7kg", "libSceInvitationDialog", "sceInvitationDialogGetResult", reinterpret_cast<uintptr_t>(&np::sceInvitationDialogGetResult));
+    register_adapter("8XKR6wa64iQ", "libSceInvitationDialog", "sceInvitationDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceInvitationDialogTerminate));
+
+    // libSceNpProfileDialog
+    register_adapter("haVZE9FgKqE", "libSceNpProfileDialog", "sceNpProfileDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceNpProfileDialogInitialize));
+    register_adapter("0Sp9vJcB1-w", "libSceNpProfileDialog", "sceNpProfileDialogOpen", reinterpret_cast<uintptr_t>(&np::sceNpProfileDialogOpen));
+    register_adapter("Lg+NCE6pTwQ", "libSceNpProfileDialog", "sceNpProfileDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceNpProfileDialogUpdateStatus));
+    register_adapter("uj9Cz7Tk0cc", "libSceNpProfileDialog", "sceNpProfileDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceNpProfileDialogTerminate));
+
+    // libSceNpSns & libSceNpSnsFacebookDialog
+    register_adapter("OoTjfxl8-wI", "libSceNpSns", "sceNpSnsInitialize", reinterpret_cast<uintptr_t>(&np::sceNpSnsInitialize));
+    register_adapter("VtyS8XLBqNE", "libSceNpSns", "sceNpSnsTerminate", reinterpret_cast<uintptr_t>(&np::sceNpSnsTerminate));
+    register_adapter("pTvAKV1iQkE", "libSceNpSns", "sceNpSnsCheckCallback", reinterpret_cast<uintptr_t>(&np::sceNpSnsCheckCallback));
+    register_adapter("tdQArULbNQk", "libSceNpSnsFacebookDialog", "sceNpSnsFacebookDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceNpSnsFacebookDialogInitialize));
+    register_adapter("Hi3onqHSN6M", "libSceNpSnsFacebookDialog", "sceNpSnsFacebookDialogOpen", reinterpret_cast<uintptr_t>(&np::sceNpSnsFacebookDialogOpen));
+    register_adapter("fjV7C8H0Y8k", "libSceNpSnsFacebookDialog", "sceNpSnsFacebookDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceNpSnsFacebookDialogUpdateStatus));
+    register_adapter("AifdcI1aKas", "libSceNpSnsFacebookDialog", "sceNpSnsFacebookDialogGetResult", reinterpret_cast<uintptr_t>(&np::sceNpSnsFacebookDialogGetResult));
+    register_adapter("cdqOFyupRS4", "libSceNpSnsFacebookDialog", "sceNpSnsFacebookDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceNpSnsFacebookDialogTerminate));
+
+    // libSceNpTrophy
+    register_adapter("XbkjbobZlCY", "libSceNpTrophy", "sceNpTrophyCreateContext", reinterpret_cast<uintptr_t>(&np::sceNpTrophyCreateContext));
+    register_adapter("q7U6tEAQf7c", "libSceNpTrophy", "sceNpTrophyCreateHandle", reinterpret_cast<uintptr_t>(&np::sceNpTrophyCreateHandle));
+    register_adapter("GNcF4oidY0Y", "libSceNpTrophy", "sceNpTrophyDestroyHandle", reinterpret_cast<uintptr_t>(&np::sceNpTrophyDestroyHandle));
+    register_adapter("E1Wrwd07Lr8", "libSceNpTrophy", "sceNpTrophyDestroyContext", reinterpret_cast<uintptr_t>(&np::sceNpTrophyDestroyContext));
+    register_adapter("TJCAxto9SEU", "libSceNpTrophy", "sceNpTrophyRegisterContext", reinterpret_cast<uintptr_t>(&np::sceNpTrophyRegisterContext));
+    register_adapter("aTnHs7W-9Uk", "libSceNpTrophy", "sceNpTrophyAbortHandle", reinterpret_cast<uintptr_t>(&np::sceNpTrophyAbortHandle));
+    register_adapter("28xmRUFao68", "libSceNpTrophy", "sceNpTrophyUnlockTrophy", reinterpret_cast<uintptr_t>(&np::sceNpTrophyUnlockTrophy));
+    register_adapter("eBL+l6HG9xk", "libSceNpTrophy", "sceNpTrophyGetTrophyIcon", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetTrophyIcon));
+    register_adapter("w4uMPmErD4I", "libSceNpTrophy", "sceNpTrophyGetGroupIcon", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetGroupIcon));
+    register_adapter("HLwz1fRIycA", "libSceNpTrophy", "sceNpTrophyGetGameIcon", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetGameIcon));
+    register_adapter("YYP3f2W09og", "libSceNpTrophy", "sceNpTrophyGetGameInfo", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetGameInfo));
+    register_adapter("qqUVGDgQBm0", "libSceNpTrophy", "sceNpTrophyGetTrophyInfo", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetTrophyInfo));
+    register_adapter("wTUwGfspKic", "libSceNpTrophy", "sceNpTrophyGetGroupInfo", reinterpret_cast<uintptr_t>(&np::sceNpTrophyGetGroupInfo));
+
+    // libSceNpCommon
+    register_adapter("i8UmXTSq7N4", "libSceNpCommon", "sceNpCmpNpId", reinterpret_cast<uintptr_t>(&np::sceNpCmpNpId));
+
+    // libSceNet
+    register_adapter("Nlev7Lg8k3A", "libSceNet", "sceNetInit", reinterpret_cast<uintptr_t>(&np::sceNetInit));
+    register_adapter("cTGkc6-TBlI", "libSceNet", "sceNetTerm", reinterpret_cast<uintptr_t>(&np::sceNetTerm));
+    register_adapter("dgJBaeJnGpo", "libSceNet", "sceNetPoolCreate", reinterpret_cast<uintptr_t>(&np::sceNetPoolCreate));
+    register_adapter("K7RlrTkI-mw", "libSceNet", "sceNetPoolDestroy", reinterpret_cast<uintptr_t>(&np::sceNetPoolDestroy));
+    register_adapter("HQOwnfMGipQ", "libSceNet", "sceNetErrnoLoc", reinterpret_cast<uintptr_t>(&np::sceNetErrnoLoc));
+    register_adapter("iWQWrwiSt8A", "libSceNet", "sceNetHtons", reinterpret_cast<uintptr_t>(&np::sceNetHtons));
+    register_adapter("Rbvt+5Y2iEw", "libSceNet", "sceNetNtohs", reinterpret_cast<uintptr_t>(&np::sceNetNtohs));
+    register_adapter("8Kcp5d-q1Uo", "libSceNet", "sceNetInetPton", reinterpret_cast<uintptr_t>(&np::sceNetInetPton));
+    register_adapter("Q4qBuN-c0ZM", "libSceNet", "sceNetSocket", reinterpret_cast<uintptr_t>(&np::sceNetSocket));
+    register_adapter("45ggEzakPJQ", "libSceNet", "sceNetSocketClose", reinterpret_cast<uintptr_t>(&np::sceNetSocketClose));
+    register_adapter("OXXX4mUk3uk", "libSceNet", "sceNetConnect", reinterpret_cast<uintptr_t>(&np::sceNetConnect));
+    register_adapter("beRjXBn-z+o", "libSceNet", "sceNetSend", reinterpret_cast<uintptr_t>(&np::sceNetSend));
+    register_adapter("9wO9XrMsNhc", "libSceNet", "sceNetRecv", reinterpret_cast<uintptr_t>(&np::sceNetRecv));
+    register_adapter("bErx49PgxyY", "libSceNet", "sceNetBind", reinterpret_cast<uintptr_t>(&np::sceNetBind));
+    register_adapter("kOj1HiAGE54", "libSceNet", "sceNetListen", reinterpret_cast<uintptr_t>(&np::sceNetListen));
+    register_adapter("PIWqhn9oSxc", "libSceNet", "sceNetAccept", reinterpret_cast<uintptr_t>(&np::sceNetAccept));
+    register_adapter("2mKX2Spso7I", "libSceNet", "sceNetSetsockopt", reinterpret_cast<uintptr_t>(&np::sceNetSetsockopt));
+    register_adapter("SF47kB2MNTo", "libSceNet", "sceNetEpollCreate", reinterpret_cast<uintptr_t>(&np::sceNetEpollCreate));
+    register_adapter("ZVw46bsasAk", "libSceNet", "sceNetEpollControl", reinterpret_cast<uintptr_t>(&np::sceNetEpollControl));
+    register_adapter("drjIbDbA7UQ", "libSceNet", "sceNetEpollWait", reinterpret_cast<uintptr_t>(&np::sceNetEpollWait));
+    register_adapter("Inp1lfL+Jdw", "libSceNet", "sceNetEpollDestroy", reinterpret_cast<uintptr_t>(&np::sceNetEpollDestroy));
+
+    // libSceNetCtl
+    register_adapter("gky0+oaNM4k", "libSceNetCtl", "sceNetCtlInit", reinterpret_cast<uintptr_t>(&np::sceNetCtlInit));
+    register_adapter("Z4wwCFiBELQ", "libSceNetCtl", "sceNetCtlTerm", reinterpret_cast<uintptr_t>(&np::sceNetCtlTerm));
+    register_adapter("uBPlr0lbuiI", "libSceNetCtl", "sceNetCtlGetState", reinterpret_cast<uintptr_t>(&np::sceNetCtlGetState));
+    register_adapter("UJ+Z7Q+4ck0", "libSceNetCtl", "sceNetCtlRegisterCallback", reinterpret_cast<uintptr_t>(&np::sceNetCtlRegisterCallback));
+    register_adapter("Rqm2OnZMCz0", "libSceNetCtl", "sceNetCtlUnregisterCallback", reinterpret_cast<uintptr_t>(&np::sceNetCtlUnregisterCallback));
+    register_adapter("obuxdTiwkF8", "libSceNetCtl", "sceNetCtlGetInfo", reinterpret_cast<uintptr_t>(&np::sceNetCtlGetInfo));
+    register_adapter("JO4yuTuMoKI", "libSceNetCtl", "sceNetCtlGetNatInfo", reinterpret_cast<uintptr_t>(&np::sceNetCtlGetNatInfo));
+    register_adapter("0cBgduPRR+M", "libSceNetCtl", "sceNetCtlGetResult", reinterpret_cast<uintptr_t>(&np::sceNetCtlGetResult));
+    register_adapter("iQw3iQPhvUQ", "libSceNetCtl", "sceNetCtlCheckCallback", reinterpret_cast<uintptr_t>(&np::sceNetCtlCheckCallback));
+
+    // libSceSsl
+    register_adapter("hdpVEUDFW3s", "libSceSsl", "sceSslInit", reinterpret_cast<uintptr_t>(&np::sceSslInit));
+    register_adapter("0K1yQ6Lv-Yc", "libSceSsl", "sceSslTerm", reinterpret_cast<uintptr_t>(&np::sceSslTerm));
+
+    // libSceHttp
+    register_adapter("A9cVMUtEp4Y", "libSceHttp", "sceHttpInit", reinterpret_cast<uintptr_t>(&np::sceHttpInit));
+    register_adapter("Ik-KpLTlf7Q", "libSceHttp", "sceHttpTerm", reinterpret_cast<uintptr_t>(&np::sceHttpTerm));
+    register_adapter("0gYjPTR-6cY", "libSceHttp", "sceHttpCreateConnectionWithURL", reinterpret_cast<uintptr_t>(&np::sceHttpCreateConnectionWithURL));
+    register_adapter("1e2BNwI-XzE", "libSceHttp", "sceHttpDeleteConnection", reinterpret_cast<uintptr_t>(&np::sceHttpDeleteConnection));
+    register_adapter("qgxDBjorUxs", "libSceHttp", "sceHttpCreateRequestWithURL", reinterpret_cast<uintptr_t>(&np::sceHttpCreateRequestWithURL));
+    register_adapter("Aeu5wVKkF9w", "libSceHttp", "sceHttpDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceHttpDeleteRequest));
+    register_adapter("qe7oZ+v4PWA", "libSceHttp", "sceHttpSendRequest", reinterpret_cast<uintptr_t>(&np::sceHttpSendRequest));
+    register_adapter("P6A3ytpsiYc", "libSceHttp", "sceHttpCreateTemplate", reinterpret_cast<uintptr_t>(&np::sceHttpCreateTemplate));
+    register_adapter("4I8vEpuEhZ8", "libSceHttp", "sceHttpDeleteTemplate", reinterpret_cast<uintptr_t>(&np::sceHttpDeleteTemplate));
+    register_adapter("0a2TBNfE3BU", "libSceHttp", "sceHttpGetStatusCode", reinterpret_cast<uintptr_t>(&np::sceHttpGetStatusCode));
+    register_adapter("yuO2H2Uvnos", "libSceHttp", "sceHttpGetResponseContentLength", reinterpret_cast<uintptr_t>(&np::sceHttpGetResponseContentLength));
+    register_adapter("P5pdoykPYTk", "libSceHttp", "sceHttpReadData", reinterpret_cast<uintptr_t>(&np::sceHttpReadData));
+    register_adapter("EY28T2bkN7k", "libSceHttp", "sceHttpAddRequestHeader", reinterpret_cast<uintptr_t>(&np::sceHttpAddRequestHeader));
+    register_adapter("YuOW3dDAKYc", "libSceHttp", "sceHttpUriEscape", reinterpret_cast<uintptr_t>(&np::sceHttpUriEscape));
+
+    // libSceNpAuth
+    register_adapter("6bwFkosYRQg", "libSceNpAuth", "sceNpAuthCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpAuthCreateRequest));
+    register_adapter("H8wG9Bk-nPc", "libSceNpAuth", "sceNpAuthDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpAuthDeleteRequest));
+    register_adapter("KxGkOrQJTqY", "libSceNpAuth", "sceNpAuthGetAuthorizationCode", reinterpret_cast<uintptr_t>(&np::sceNpAuthGetAuthorizationCode));
+
+    // libSceNpCommerce
+    register_adapter("0aR2aWmQal4", "libSceNpCommerce", "sceNpCommerceDialogInitialize", reinterpret_cast<uintptr_t>(&np::sceNpCommerceDialogInitialize));
+    register_adapter("DfSCDRA3EjY", "libSceNpCommerce", "sceNpCommerceDialogOpen", reinterpret_cast<uintptr_t>(&np::sceNpCommerceDialogOpen));
+    register_adapter("m-I92Ab50W8", "libSceNpCommerce", "sceNpCommerceDialogTerminate", reinterpret_cast<uintptr_t>(&np::sceNpCommerceDialogTerminate));
+    register_adapter("LR5cwFMMCVE", "libSceNpCommerce", "sceNpCommerceDialogUpdateStatus", reinterpret_cast<uintptr_t>(&np::sceNpCommerceDialogUpdateStatus));
+    register_adapter("r42bWcQbtZY", "libSceNpCommerce", "sceNpCommerceDialogGetResult", reinterpret_cast<uintptr_t>(&np::sceNpCommerceDialogGetResult));
+
+    // libSceNpMatching2
+    register_adapter("10t3e5+JPnU", "libSceNpMatching2", "sceNpMatching2Initialize", reinterpret_cast<uintptr_t>(&np::sceNpMatching2Initialize));
+    register_adapter("Mqp3lJ+sjy4", "libSceNpMatching2", "sceNpMatching2Terminate", reinterpret_cast<uintptr_t>(&np::sceNpMatching2Terminate));
+    register_adapter("meEjIdbjAA0", "libSceNpMatching2", "sceNpMatching2SetUserInfo", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SetUserInfo));
+    register_adapter("7vjNQ6Z1op0", "libSceNpMatching2", "sceNpMatching2ContextStart", reinterpret_cast<uintptr_t>(&np::sceNpMatching2ContextStart));
+    register_adapter("-f6M4caNe8k", "libSceNpMatching2", "sceNpMatching2ContextStop", reinterpret_cast<uintptr_t>(&np::sceNpMatching2ContextStop));
+    register_adapter("Nz-ZE7ur32I", "libSceNpMatching2", "sceNpMatching2DestroyContext", reinterpret_cast<uintptr_t>(&np::sceNpMatching2DestroyContext));
+    register_adapter("YfmpW719rMo", "libSceNpMatching2", "sceNpMatching2CreateContext", reinterpret_cast<uintptr_t>(&np::sceNpMatching2CreateContext));
+    register_adapter("fQQfP87I7hs", "libSceNpMatching2", "sceNpMatching2RegisterContextCallback", reinterpret_cast<uintptr_t>(&np::sceNpMatching2RegisterContextCallback));
+    register_adapter("p+2EnxmaAMM", "libSceNpMatching2", "sceNpMatching2RegisterRoomEventCallback", reinterpret_cast<uintptr_t>(&np::sceNpMatching2RegisterRoomEventCallback));
+    register_adapter("uBESzz4CQws", "libSceNpMatching2", "sceNpMatching2RegisterRoomMessageCallback", reinterpret_cast<uintptr_t>(&np::sceNpMatching2RegisterRoomMessageCallback));
+    register_adapter("0UMeWRGnZKA", "libSceNpMatching2", "sceNpMatching2RegisterSignalingCallback", reinterpret_cast<uintptr_t>(&np::sceNpMatching2RegisterSignalingCallback));
+    register_adapter("+8e7wXLmjds", "libSceNpMatching2", "sceNpMatching2SetDefaultRequestOptParam", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SetDefaultRequestOptParam));
+    register_adapter("LhCPctIICxQ", "libSceNpMatching2", "sceNpMatching2GetServerId", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetServerId));
+    register_adapter("BD6kfx442Do", "libSceNpMatching2", "sceNpMatching2LeaveRoom", reinterpret_cast<uintptr_t>(&np::sceNpMatching2LeaveRoom));
+    register_adapter("CSIMDsVjs-g", "libSceNpMatching2", "sceNpMatching2JoinRoom", reinterpret_cast<uintptr_t>(&np::sceNpMatching2JoinRoom));
+    register_adapter("zCWZmXXN600", "libSceNpMatching2", "sceNpMatching2CreateJoinRoom", reinterpret_cast<uintptr_t>(&np::sceNpMatching2CreateJoinRoom));
+    register_adapter("VqZX7POg2Mk", "libSceNpMatching2", "sceNpMatching2SearchRoom", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SearchRoom));
+    register_adapter("qeF-q5KDtAc", "libSceNpMatching2", "sceNpMatching2GetUserInfoList", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetUserInfoList));
+    register_adapter("rJNPJqDCpiI", "libSceNpMatching2", "sceNpMatching2GetWorldInfoList", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetWorldInfoList));
+    register_adapter("Iw2h0Jrrb5U", "libSceNpMatching2", "sceNpMatching2SendRoomMessage", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SendRoomMessage));
+    register_adapter("opDpl74pi2E", "libSceNpMatching2", "sceNpMatching2SendRoomChatMessage", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SendRoomChatMessage));
+    register_adapter("26vWrPAWJfM", "libSceNpMatching2", "sceNpMatching2GetRoomDataExternalList", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetRoomDataExternalList));
+    register_adapter("Jraxifmoet4", "libSceNpMatching2", "sceNpMatching2GetRoomDataInternal", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetRoomDataInternal));
+    register_adapter("5lhvOqheFBA", "libSceNpMatching2", "sceNpMatching2GetRoomMemberDataInternal", reinterpret_cast<uintptr_t>(&np::sceNpMatching2GetRoomMemberDataInternal));
+    register_adapter("q7GK98-nYSE", "libSceNpMatching2", "sceNpMatching2SetRoomDataExternal", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SetRoomDataExternal));
+    register_adapter("S9D8JSYIrjE", "libSceNpMatching2", "sceNpMatching2SetRoomDataInternal", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SetRoomDataInternal));
+    register_adapter("HoqTrkS9c5Q", "libSceNpMatching2", "sceNpMatching2SetRoomMemberDataInternal", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SetRoomMemberDataInternal));
+    register_adapter("AUVfU6byg3c", "libSceNpMatching2", "sceNpMatching2KickoutRoomMember", reinterpret_cast<uintptr_t>(&np::sceNpMatching2KickoutRoomMember));
+    register_adapter("twVupeaYYrk", "libSceNpMatching2", "sceNpMatching2SignalingGetConnectionInfo", reinterpret_cast<uintptr_t>(&np::sceNpMatching2SignalingGetConnectionInfo));
+
+    // libSceNpScore
+    register_adapter("KnNA1TEgtBI", "libSceNpScore", "sceNpScoreCreateNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpScoreCreateNpTitleCtx));
+    register_adapter("G0pE+RNCwfk", "libSceNpScore", "sceNpScoreDeleteNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpScoreDeleteNpTitleCtx));
+    register_adapter("gW8qyjYrUbk", "libSceNpScore", "sceNpScoreCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpScoreCreateRequest));
+    register_adapter("dK8-SgYf6r4", "libSceNpScore", "sceNpScoreDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpScoreDeleteRequest));
+    register_adapter("zT0XBtgtOSI", "libSceNpScore", "sceNpScoreRecordScore", reinterpret_cast<uintptr_t>(&np::sceNpScoreRecordScore));
+    register_adapter("ANJssPz3mY0", "libSceNpScore", "sceNpScoreRecordScoreAsync", reinterpret_cast<uintptr_t>(&np::sceNpScoreRecordScoreAsync));
+    register_adapter("m1DfNRstkSQ", "libSceNpScore", "sceNpScorePollAsync", reinterpret_cast<uintptr_t>(&np::sceNpScorePollAsync));
+    register_adapter("1i7kmKbX6hk", "libSceNpScore", "sceNpScoreAbortRequest", reinterpret_cast<uintptr_t>(&np::sceNpScoreAbortRequest));
+    register_adapter("LoVMVrijVOk", "libSceNpScore", "sceNpScoreGetBoardInfo", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetBoardInfo));
+    register_adapter("KBHxDjyk-jA", "libSceNpScore", "sceNpScoreGetRankingByRange", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetRankingByRange));
+    register_adapter("rShmqXHwoQE", "libSceNpScore", "sceNpScoreGetRankingByRangeAsync", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetRankingByRangeAsync));
+    register_adapter("9mZEgoiEq6Y", "libSceNpScore", "sceNpScoreGetRankingByNpId", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetRankingByNpId));
+    register_adapter("Rd27dqUFZV8", "libSceNpScore", "sceNpScoreGetRankingByNpIdAsync", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetRankingByNpIdAsync));
+    register_adapter("8kuIzUw6utQ", "libSceNpScore", "sceNpScoreGetFriendsRanking", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetFriendsRanking));
+    register_adapter("7SuMUlN7Q6I", "libSceNpScore", "sceNpScoreGetFriendsRankingAsync", reinterpret_cast<uintptr_t>(&np::sceNpScoreGetFriendsRankingAsync));
+
+    // libSceNpTus
+    register_adapter("BIkMmUfNKWM", "libSceNpTus", "sceNpTusCreateNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpTusCreateNpTitleCtx));
+    register_adapter("H3uq7x0sZOI", "libSceNpTus", "sceNpTusDeleteNpTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpTusDeleteNpTitleCtx));
+    register_adapter("3bh2aBvvmvM", "libSceNpTus", "sceNpTusCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpTusCreateRequest));
+    register_adapter("CcIH40dYS88", "libSceNpTus", "sceNpTusDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpTusDeleteRequest));
+    register_adapter("4NrufkNCkiE", "libSceNpTus", "sceNpTusSetData", reinterpret_cast<uintptr_t>(&np::sceNpTusSetData));
+    register_adapter("+RhzSuuXwxo", "libSceNpTus", "sceNpTusSetDataVUser", reinterpret_cast<uintptr_t>(&np::sceNpTusSetDataVUser));
+    register_adapter("XOzszO4ONWU", "libSceNpTus", "sceNpTusGetData", reinterpret_cast<uintptr_t>(&np::sceNpTusGetData));
+    register_adapter("GQHCksS7aLs", "libSceNpTus", "sceNpTusGetDataVUser", reinterpret_cast<uintptr_t>(&np::sceNpTusGetDataVUser));
+    register_adapter("c6aYoa47YgI", "libSceNpTus", "sceNpTusSetMultiSlotVariable", reinterpret_cast<uintptr_t>(&np::sceNpTusSetMultiSlotVariable));
+    register_adapter("1Cz0hTJFyh4", "libSceNpTus", "sceNpTusSetMultiSlotVariableVUser", reinterpret_cast<uintptr_t>(&np::sceNpTusSetMultiSlotVariableVUser));
+    register_adapter("F+eQlfcka98", "libSceNpTus", "sceNpTusGetMultiSlotVariable", reinterpret_cast<uintptr_t>(&np::sceNpTusGetMultiSlotVariable));
+    register_adapter("uFxVYJEkcmc", "libSceNpTus", "sceNpTusGetMultiSlotVariableVUser", reinterpret_cast<uintptr_t>(&np::sceNpTusGetMultiSlotVariableVUser));
+    register_adapter("-SUR+UoLS6c", "libSceNpTus", "sceNpTssGetData", reinterpret_cast<uintptr_t>(&np::sceNpTssGetData));
+
+    // libSceNpUtility
+    register_adapter("8533Q+LU7EQ", "libSceNpUtility", "sceNpLookupCreateTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpLookupCreateTitleCtx));
+    register_adapter("mtqDK9zkoIE", "libSceNpUtility", "sceNpLookupDeleteTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpLookupDeleteTitleCtx));
+    register_adapter("iQr9UxPHUFs", "libSceNpUtility", "sceNpLookupCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpLookupCreateRequest));
+    register_adapter("wLaxchvEEnk", "libSceNpUtility", "sceNpLookupDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpLookupDeleteRequest));
+    register_adapter("T6tnM1Uti4g", "libSceNpUtility", "sceNpLookupNpId", reinterpret_cast<uintptr_t>(&np::sceNpLookupNpId));
+    register_adapter("jktww3yJXnc", "libSceNpUtility", "sceNpBandwidthTestInitStart", reinterpret_cast<uintptr_t>(&np::sceNpBandwidthTestInitStart));
+    register_adapter("BYIZGKm6bO4", "libSceNpUtility", "sceNpBandwidthTestGetStatus", reinterpret_cast<uintptr_t>(&np::sceNpBandwidthTestGetStatus));
+    register_adapter("pLr1fEQS1z8", "libSceNpUtility", "sceNpBandwidthTestShutdown", reinterpret_cast<uintptr_t>(&np::sceNpBandwidthTestShutdown));
+    register_adapter("r9BgI0PfJZg", "libSceNpUtility", "sceNpWordFilterCreateTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterCreateTitleCtx));
+    register_adapter("t0P5z5yuFPA", "libSceNpUtility", "sceNpWordFilterDeleteTitleCtx", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterDeleteTitleCtx));
+    register_adapter("iCq5xW5KQW4", "libSceNpUtility", "sceNpWordFilterCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterCreateRequest));
+    register_adapter("IEB+vgVoQbw", "libSceNpUtility", "sceNpWordFilterCreateAsyncRequest", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterCreateAsyncRequest));
+    register_adapter("PYFS1H70bDs", "libSceNpUtility", "sceNpWordFilterDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterDeleteRequest));
+    register_adapter("rAOOqDAxBIk", "libSceNpUtility", "sceNpWordFilterAbortRequest", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterAbortRequest));
+    register_adapter("ur5SShyG0dk", "libSceNpUtility", "sceNpWordFilterPollAsync", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterPollAsync));
+    register_adapter("1dMndqL-QgE", "libSceNpUtility", "sceNpWordFilterCensorComment", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterCensorComment));
+    register_adapter("Jj4mkpFO2gE", "libSceNpUtility", "sceNpWordFilterSanitizeComment", reinterpret_cast<uintptr_t>(&np::sceNpWordFilterSanitizeComment));
+
+    // libSceNpWebApi
+    register_adapter("G3AnLNdRBjE", "libSceNpWebApi", "sceNpWebApiInitialize", reinterpret_cast<uintptr_t>(&np::sceNpWebApiInitialize));
+    register_adapter("x1Y7yiYSk7c", "libSceNpWebApi", "sceNpWebApiCreateContext", reinterpret_cast<uintptr_t>(&np::sceNpWebApiCreateContext));
+    register_adapter("XUjdsSTTZ3U", "libSceNpWebApi", "sceNpWebApiDeleteContext", reinterpret_cast<uintptr_t>(&np::sceNpWebApiDeleteContext));
+    register_adapter("asz3TtIqGF8", "libSceNpWebApi", "sceNpWebApiTerminate", reinterpret_cast<uintptr_t>(&np::sceNpWebApiTerminate));
+    register_adapter("rdgs5Z1MyFw", "libSceNpWebApi", "sceNpWebApiCreateRequest", reinterpret_cast<uintptr_t>(&np::sceNpWebApiCreateRequest));
+    register_adapter("kVbL4hL3K7w", "libSceNpWebApi", "sceNpWebApiSendRequest", reinterpret_cast<uintptr_t>(&np::sceNpWebApiSendRequest));
+    register_adapter("JzhYTP2fG18", "libSceNpWebApi", "sceNpWebApiAbortRequest", reinterpret_cast<uintptr_t>(&np::sceNpWebApiAbortRequest));
+    register_adapter("noQgleu+KLE", "libSceNpWebApi", "sceNpWebApiDeleteRequest", reinterpret_cast<uintptr_t>(&np::sceNpWebApiDeleteRequest));
+    register_adapter("k210oKgP80Y", "libSceNpWebApi", "sceNpWebApiGetHttpStatusCode", reinterpret_cast<uintptr_t>(&np::sceNpWebApiGetHttpStatusCode));
+    register_adapter("CQtPRSF6Ds8", "libSceNpWebApi", "sceNpWebApiReadData", reinterpret_cast<uintptr_t>(&np::sceNpWebApiReadData));
+    register_adapter("79M-JqvvGo0", "libSceNpWebApi", "sceNpWebApiCreateHandle", reinterpret_cast<uintptr_t>(&np::sceNpWebApiCreateHandle));
+    register_adapter("y5Ta5JCzQHY", "libSceNpWebApi", "sceNpWebApiCreatePushEventFilter", reinterpret_cast<uintptr_t>(&np::sceNpWebApiCreatePushEventFilter));
+    register_adapter("sIFx734+xys", "libSceNpWebApi", "sceNpWebApiCreateServicePushEventFilter", reinterpret_cast<uintptr_t>(&np::sceNpWebApiCreateServicePushEventFilter));
+    register_adapter("PfQ+f6ws764", "libSceNpWebApi", "sceNpWebApiDeleteServicePushEventFilter", reinterpret_cast<uintptr_t>(&np::sceNpWebApiDeleteServicePushEventFilter));
+    register_adapter("zE+R6Rcx3W0", "libSceNpWebApi", "sceNpWebApiDeletePushEventFilter", reinterpret_cast<uintptr_t>(&np::sceNpWebApiDeletePushEventFilter));
+    register_adapter("5Mn7TYwpl30", "libSceNpWebApi", "sceNpWebApiDeleteHandle", reinterpret_cast<uintptr_t>(&np::sceNpWebApiDeleteHandle));
+    register_adapter("743ZzEBzlV8", "libSceNpWebApi", "sceNpWebApiGetHttpResponseHeaderValueLength", reinterpret_cast<uintptr_t>(&np::sceNpWebApiGetHttpResponseHeaderValueLength));
+    register_adapter("VwJ5L0Higg0", "libSceNpWebApi", "sceNpWebApiGetHttpResponseHeaderValue", reinterpret_cast<uintptr_t>(&np::sceNpWebApiGetHttpResponseHeaderValue));
+    register_adapter("PfSTDCgNMgc", "libSceNpWebApi", "sceNpWebApiRegisterPushEventCallback", reinterpret_cast<uintptr_t>(&np::sceNpWebApiRegisterPushEventCallback));
+    register_adapter("kJQJE0uKm5w", "libSceNpWebApi", "sceNpWebApiRegisterServicePushEventCallback", reinterpret_cast<uintptr_t>(&np::sceNpWebApiRegisterServicePushEventCallback));
+    register_adapter("2edrkr0c-wg", "libSceNpWebApi", "sceNpWebApiUnregisterServicePushEventCallback", reinterpret_cast<uintptr_t>(&np::sceNpWebApiUnregisterServicePushEventCallback));
+    register_adapter("qK4o2656W4w", "libSceNpWebApi", "sceNpWebApiUnregisterPushEventCallback", reinterpret_cast<uintptr_t>(&np::sceNpWebApiUnregisterPushEventCallback));
+    register_adapter("or0e885BlXo", "libSceNpWebApi", "sceNpWebApiUtilityParseNpId", reinterpret_cast<uintptr_t>(&np::sceNpWebApiUtilityParseNpId));
 }
 
 } // namespace gravity::hle

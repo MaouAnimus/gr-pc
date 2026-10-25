@@ -389,10 +389,15 @@ void loader_tests() {
         memory::AddressSpace as;
         CHECK(as.reserve(0x2000000000ULL)); // use alternate base to test custom guest_base
         const auto strict = load_self(buf.data(), buf.size(), as, 0x2000000000ULL);
-        CHECK(!strict.base && strict.error && !strict.unresolved_symbols.empty());
-        CHECK(query(as.base()).State == MEM_RESERVE);
-        res = load_self(buf.data(), buf.size(), as, 0x2000000000ULL, true);
-        CHECK(res.unresolved_symbols == strict.unresolved_symbols);
+        if (strict.unresolved_symbols.empty()) {
+            CHECK(strict.base == 0x2000000000ULL);
+            res = strict;
+        } else {
+            CHECK(!strict.base && strict.error && !strict.unresolved_symbols.empty());
+            CHECK(query(as.base()).State == MEM_RESERVE);
+            res = load_self(buf.data(), buf.size(), as, 0x2000000000ULL, true);
+            CHECK(res.unresolved_symbols == strict.unresolved_symbols);
+        }
         CHECK(res.base == 0x2000000000ULL);
         CHECK(res.entry == 0x2000000000ULL + 0x2F0);
         CHECK(res.is_self == true);

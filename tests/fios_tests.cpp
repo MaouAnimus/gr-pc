@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <string_view>
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); std::exit(1); } } while(false)
@@ -15,12 +16,34 @@ using TermFn = std::int32_t(GRAVITY_SYSV_ABI*)();
 using FilterAddFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, void*, void*);
 using FilterRemoveFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t);
 using MountBufferFn = std::int64_t(GRAVITY_SYSV_ABI*)(const void*, const char*, const void*);
-using MountFn = std::int32_t(GRAVITY_SYSV_ABI*)(const void*, const char*, const char*, void*, std::size_t, const void*, std::int32_t*);
+using MountFn = std::int32_t(GRAVITY_SYSV_ABI*)(const void*, std::int32_t*, const char*, const char*, void*, std::size_t, const void*);
 using UnmountFn = std::int32_t(GRAVITY_SYSV_ABI*)(const void*, std::int32_t);
 
 static GRAVITY_SYSV_ABI std::int32_t dummy_filter_cb(void* context, void* op, void* data) {
     (void)context; (void)op; (void)data;
     return SCE_FIOS_OK;
+}
+
+struct ReadCallbackCapture {
+    unsigned calls{};
+    SceFiosOp op{};
+    std::int32_t status{};
+    std::int32_t error{};
+    std::int32_t published_error{};
+    std::int64_t actual_count{};
+};
+
+static GRAVITY_SYSV_ABI void capture_read_callback(
+    void* context, SceFiosOp op, std::int32_t status, std::int32_t error) {
+    auto& capture = *static_cast<ReadCallbackCapture*>(context);
+    ++capture.calls;
+    capture.op = op;
+    capture.status = status;
+    capture.error = error;
+    // A completion callback must observe the published result and may query it
+    // without deadlocking the operation registry.
+    capture.published_error = sceFiosOpGetError(op);
+    capture.actual_count = sceFiosOpGetActualCount(op);
 }
 
 int main(int argc, char** argv) {
@@ -180,12 +203,12 @@ int main(int argc, char** argv) {
         CHECK(buf_size > 0);
 
         // Mounting
-        CHECK(fn_mount(nullptr, nullptr, "/arc/", nullptr, 0, nullptr, nullptr) == SCE_FIOS_ERROR_NULL_POINTER);
-        CHECK(fn_mount(nullptr, "/app0/arc/test.psarc", nullptr, nullptr, 0, nullptr, nullptr) == SCE_FIOS_ERROR_NULL_POINTER);
+        CHECK(fn_mount(nullptr, nullptr, nullptr, "/arc/", nullptr, 0, nullptr) == SCE_FIOS_ERROR_NULL_POINTER);
+        CHECK(fn_mount(nullptr, nullptr, "/app0/arc/test.psarc", nullptr, nullptr, 0, nullptr) == SCE_FIOS_ERROR_NULL_POINTER);
 
         std::int32_t mount_id = 0;
         char buffer[1024]{};
-        CHECK(fn_mount(nullptr, "/app0/arc/arc_0_ep_0_0.psarc", "/arc/", buffer, sizeof(buffer), nullptr, &mount_id) == SCE_FIOS_OK);
+        CHECK(fn_mount(nullptr, &mount_id, "/app0/arc/arc_0_ep_0_0.psarc", "/arc/", buffer, sizeof(buffer), nullptr) == SCE_FIOS_OK);
         CHECK(mount_id > 0);
 
         // Unmount
@@ -291,8 +314,60 @@ int main(int argc, char** argv) {
 
         // 7. Direct file read
         char direct_buf[8] = {};
-        CHECK(sceFiosFileReadSync(nullptr, "/app0/arc/arc_0_ep_0_0.psarc", 0, direct_buf, sizeof(direct_buf)) == sizeof(direct_buf));
+        CHECK(sceFiosFileReadSync(nullptr, "/app0/arc/arc_0_ep_0_0.psarc", direct_buf, sizeof(direct_buf), 0) == sizeof(direct_buf));
         CHECK(std::memcmp(direct_buf, "PSAR", 4) == 0);
+
+        // Regression for the observed startup Lua resource. The guest builds
+        // this mixed-case path with both an archive alias and a doubled slash.
+        // The original fault at eboot+0x148556 received a null resource blob;
+        // its exact filename was not captured. This observed startup path
+        // exercises the corrected ABI and archive resolution together.
+        constexpr const char* lua_path = "arc0/lua//Game/Param/globals.evs";
+        constexpr const char* canonical_lua_path = "lua/game/param/globals.evs";
+        CHECK(sceFiosExistsSync(nullptr, lua_path) == 1);
+        CHECK(sceFiosFileGetSizeSync(nullptr, lua_path) == 1667023);
+        using ReadSyncFn = std::int64_t(GRAVITY_SYSV_ABI*)(
+            const void*, const char*, void*, std::size_t, std::int64_t);
+        const auto read_sync = reinterpret_cast<ReadSyncFn>(registry.resolve("kVMxSiYD6tc", "libSceFios2"));
+        CHECK(read_sync == &sceFiosFileReadSync);
+        std::array<unsigned char, 40> guarded_header;
+        guarded_header.fill(0xa5);
+        CHECK(read_sync(nullptr, lua_path, guarded_header.data() + 4, 32, 0) == 32);
+        CHECK(std::memcmp(guarded_header.data() + 4, "FBKK", 4) == 0);
+        for (std::size_t i = 0; i < 4; ++i) {
+            CHECK(guarded_header[i] == 0xa5);
+            CHECK(guarded_header[36 + i] == 0xa5);
+        }
+        std::array<unsigned char, 32> canonical_header{};
+        CHECK(read_sync(nullptr, canonical_lua_path, canonical_header.data(), canonical_header.size(), 0) == 32);
+        CHECK(std::memcmp(canonical_header.data(), guarded_header.data() + 4, canonical_header.size()) == 0);
+        std::uint32_t blob_type = 0;
+        CHECK(read_sync(nullptr, lua_path, &blob_type, sizeof(blob_type), 16) == sizeof(blob_type));
+        CHECK(blob_type == 0x14); // The type consumed by the faulting guest accessor.
+
+        using ReadAsyncFn = SceFiosOp(GRAVITY_SYSV_ABI*)(
+            const void*, const char*, void*, std::size_t, std::int64_t);
+        const auto read_async = reinterpret_cast<ReadAsyncFn>(registry.resolve("YlKCkfJL+Y8", "libSceFios2"));
+        CHECK(read_async == &sceFiosFileRead);
+        ReadCallbackCapture capture;
+        SceFiosOpAttr read_attr{};
+        read_attr.callback = reinterpret_cast<void*>(&capture_read_callback);
+        read_attr.context = &capture;
+        blob_type = 0;
+        const auto lua_op = read_async(&read_attr, lua_path, &blob_type, sizeof(blob_type), 16);
+        CHECK(lua_op > 0 && sceFiosOpWait(lua_op) == SCE_FIOS_OK);
+        CHECK(capture.calls == 1 && capture.op == lua_op && capture.status == 1);
+        CHECK(capture.error == SCE_FIOS_OK && capture.published_error == SCE_FIOS_OK);
+        CHECK(capture.actual_count == sizeof(blob_type) && blob_type == 0x14);
+        CHECK(sceFiosOpDelete(lua_op) == SCE_FIOS_OK);
+        capture = {};
+        blob_type = 0xfeedface;
+        const auto missing_op = read_async(&read_attr, "arc0/lua//Game/Param/__missing__.evs",
+                                           &blob_type, sizeof(blob_type), 16);
+        CHECK(missing_op > 0 && capture.calls == 1 && capture.op == missing_op && capture.status == 1);
+        CHECK(capture.error == SCE_FIOS_ERROR_FILE_NOT_FOUND && capture.published_error == capture.error);
+        CHECK(capture.actual_count == 0 && blob_type == 0xfeedface);
+        CHECK(sceFiosOpDelete(missing_op) == SCE_FIOS_OK);
 
         // 8. Directory handle operations
         SceFiosDH dh = SCE_FIOS_DH_INVALID;

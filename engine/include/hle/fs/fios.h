@@ -62,6 +62,14 @@ constexpr SceFiosFH SCE_FIOS_FH_INVALID = 0;
 constexpr SceFiosDH SCE_FIOS_DH_INVALID = 0;
 constexpr SceFiosOp SCE_FIOS_OP_INVALID = 0;
 
+// Authentic SceFiosOpAttr layout
+struct alignas(8) SceFiosOpAttr {
+    std::uint64_t flags{0};           // offset 0x00
+    void*         callback{nullptr};  // offset 0x08: void (*callback)(void* context, SceFiosOp op, std::int32_t status, std::int32_t error)
+    void*         context{nullptr};   // offset 0x10: user context pointer
+    std::uint32_t priority{0};        // offset 0x18
+};
+
 // Authentic Stat layout (80 bytes / 0x50)
 struct alignas(8) SceFiosStat {
     std::int64_t size{0};             // offset 0x00: file size in bytes
@@ -100,8 +108,8 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosIOFilterPsarcDearchiver(
 GRAVITY_SYSV_ABI std::int64_t sceFiosArchiveGetMountBufferSizeSync(
     const void* attr, const char* path, const void* params);
 GRAVITY_SYSV_ABI std::int32_t sceFiosArchiveMountSync(
-    const void* attr, const char* archive_path, const char* mount_point,
-    void* buffer, std::size_t buffer_size, const void* params, std::int32_t* out_mount_id);
+    const void* attr, std::int32_t* out_mount_id, const char* archive_path,
+    const char* mount_point, void* buffer, std::size_t buffer_size, const void* params);
 GRAVITY_SYSV_ABI std::int32_t sceFiosArchiveUnmountSync(
     const void* attr, std::int32_t mount_id);
 
@@ -143,13 +151,13 @@ GRAVITY_SYSV_ABI std::int32_t sceFiosDirectoryExistsSync(
 GRAVITY_SYSV_ABI std::int32_t sceFiosStatSync(
     const void* attr, const char* path, SceFiosStat* out_stat);
 GRAVITY_SYSV_ABI std::int64_t sceFiosFileReadSync(
-    const void* attr, const char* path, std::int64_t offset, void* data, std::size_t size);
+    const void* attr, const char* path, void* data, std::size_t size, std::int64_t offset);
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFileRead(
-    const void* attr, const char* path, std::int64_t offset, void* data, std::size_t size);
+    const void* attr, const char* path, void* data, std::size_t size, std::int64_t offset);
 GRAVITY_SYSV_ABI std::int64_t sceFiosFileWriteSync(
-    const void* attr, const char* path, std::int64_t offset, const void* data, std::size_t size);
+    const void* attr, const char* path, const void* data, std::size_t size, std::int64_t offset);
 GRAVITY_SYSV_ABI SceFiosOp sceFiosFileWrite(
-    const void* attr, const char* path, std::int64_t offset, const void* data, std::size_t size);
+    const void* attr, const char* path, const void* data, std::size_t size, std::int64_t offset);
 GRAVITY_SYSV_ABI std::int32_t sceFiosFileDeleteSync(
     const void* attr, const char* path);
 

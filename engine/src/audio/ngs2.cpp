@@ -90,14 +90,24 @@ GRAVITY_SYSV_ABI std::int32_t sceNgs2SystemDestroy(std::uint32_t sys_handle) {
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceNgs2RackQueryBufferSize(
-    const void* params, std::size_t* out_size) {
-    (void)params;
-    if (!out_size || !guest_memory::accessible(out_size, sizeof(std::size_t), true)) {
-        return SCE_NGS2_ERROR_INVALID_PARAM;
-    }
+    const void* arg1, const void* arg2, void* arg3) {
     const std::size_t required = 65536; // Standard 64 KB rack work buffer
-    guest_memory::write(out_size, &required, sizeof(required));
-    return SCE_OK;
+    if (arg3 && guest_memory::accessible(arg3, sizeof(SceNgs2RackBufferInfo), true)) {
+        SceNgs2RackBufferInfo info{};
+        info.hostBuffer = nullptr;
+        info.hostBufferSize = required;
+        guest_memory::write(arg3, &info, sizeof(info));
+        std::fprintf(stderr, "[NGS2] sceNgs2RackQueryBufferSize: type=%p desc=%p out_info=%p (size=%zu)\n",
+                     arg1, arg2, arg3, required);
+        return SCE_OK;
+    }
+    if (arg2 && guest_memory::accessible(arg2, sizeof(std::size_t), true)) {
+        guest_memory::write(const_cast<void*>(arg2), &required, sizeof(required));
+        std::fprintf(stderr, "[NGS2] sceNgs2RackQueryBufferSize (legacy 2-arg): desc=%p out_size=%p (size=%zu)\n",
+                     arg1, arg2, required);
+        return SCE_OK;
+    }
+    return SCE_NGS2_ERROR_INVALID_PARAM;
 }
 
 GRAVITY_SYSV_ABI std::int32_t sceNgs2RackCreate(

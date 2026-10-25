@@ -83,6 +83,7 @@ ExecutionReport execute_isolated_sysv(
 std::string format_report(const ExecutionReport& report);
 
 const char* crash_reason_name(CrashReason reason) noexcept;
+void resolve_address_module(std::uintptr_t ip, const RunnerConfig& config, std::string& out_module, std::uintptr_t& out_offset);
 ExecutionReport execute_current_sysv(std::uintptr_t entry, std::uint64_t argument, const RunnerConfig& config);
 
 } // namespace gravity::hle::runner

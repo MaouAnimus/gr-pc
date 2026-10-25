@@ -284,18 +284,31 @@ extern "C" GRAVITY_SYSV_ABI int posix_cond_timedwait(Opaque* cond, Opaque* mutex
     const auto* ts = static_cast<const GuestTimespec*>(abstime);
     if (ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000) return invalid;
 
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER uli;
-    uli.LowPart = ft.dwLowDateTime;
-    uli.HighPart = ft.dwHighDateTime;
-    std::uint64_t now_us = (uli.QuadPart - 116444736000000000ULL) / 10;
-    std::uint64_t target_us = static_cast<std::uint64_t>(ts->tv_sec) * 1000000ULL + static_cast<std::uint64_t>(ts->tv_nsec / 1000);
+    std::uint64_t now_us = 0;
+    if (ts->tv_sec >= 1000000000LL) {
+        // Absolute calendar time (CLOCK_REALTIME)
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER uli;
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        constexpr uint64_t epoch_diff = 116444736000000000ULL;
+        const uint64_t ft_unix = uli.QuadPart >= epoch_diff ? uli.QuadPart - epoch_diff : 0;
+        now_us = ft_unix / 10;
+    } else {
+        // Absolute monotonic uptime (CLOCK_MONOTONIC)
+        LARGE_INTEGER freq, counter;
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&counter);
+        now_us = static_cast<uint64_t>((counter.QuadPart * 1000000ULL) / freq.QuadPart);
+    }
+
+    const std::uint64_t target_us = static_cast<std::uint64_t>(ts->tv_sec) * 1000000ULL + static_cast<std::uint64_t>(ts->tv_nsec / 1000);
 
     if (target_us <= now_us) {
         return 60; // ETIMEDOUT
     }
-    std::uint64_t rel_us = target_us - now_us;
+    const std::uint64_t rel_us = target_us - now_us;
     return posix_cond_reltimedwait(cond, mutex, rel_us);
 }
 

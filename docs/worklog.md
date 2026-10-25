@@ -623,3 +623,26 @@ exportaciones sin nombre: 539 identidades y 142 nombres pendientes de 681.
   - Cero advertencias con `-Wall -Wextra -Wpedantic -Werror` bajo Clang64 en C++23.
   - Ejecución real en arranque del juego (`launcher.exe --boot --headless --timeout=5000`): montaje de archivos de episodio (`arc_0_ep_0_0.psarc`), inicialización de estado de hardware de dibujo GNM, envío ininterrumpido de command buffers (`size0=2668`) y presentación continua de flips triple-buffer (`buffer 1 -> buffer 2 -> buffer 0`).
 
+## 2026-10-24 — Hito Mayor: Descubrimiento de SRT / Fetch Shaders GNM, Resolución de Descriptores V# Indirectos y Traducción 100% Exitosa de Shaders GCN Reales a SPIR-V
+
+- **Deconstrucción del Flujo de Comandos PM4 y Descriptores de Hardware:**
+  - Identificada la arquitectura real de envío de dibujo de *Gravity Rush Remastered*: los buffers de comando tempranos ejecutan quads 2D iniciales (`DRAW_INDEX_AUTO`, `count=4, instances=1`).
+  - Descubierto el protocolo de shaders embebidos y tablas SRT (*Shader Resource Table*) de GNM:
+    - `SPI_SHADER_USER_DATA_VS_0` (registro `0x2c4c`) es programado con el puntero al fetch shader GCN (`0x817e8400` y `0x833e9600`) que ejecuta la carga de atributos vía instrucciones `mubuf` (`buffer_load_format_xyzw`) y salto indirecto `s_setpc_b64`.
+    - `SPI_SHADER_USER_DATA_VS_2` (registro `0x2c4e`) contiene un puntero de memoria directa (`0x82df8520`) hacia el descriptor de buffer V# de 4 DWORDs (`817e8300 00080000 00000008 2005f22c`).
+    - Desreferenciación y extracción de las coordenadas reales de vértices en memoria de invitado (`0x817e8300`): float 2D `(-1, -1), (1, -1), (-1, 1), (1, 1)`.
+    - `SPI_SHADER_USER_DATA_PS_4..7` (registros `0x2c10..0x2c13`) suministra el descriptor de textura T# completo de 128x128 BC1 con tiling micro-tiled `0x94e00fac`.
+
+- **Localización y Traducción Directa de Shaders GCN Reales en Memoria a SPIR-V:**
+  - Localizados los programas shader de fragmento reales en el espacio de memoria de invitado:
+    - Shader plano/clear en `0x817e8000`: 9 instrucciones Sea Islands, decodificadas y traducidas por [gcn_translator.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/gcn_translator.cpp) a **1.186 palabras de SPIR-V válido (éxito 100%)**.
+    - Shader con textura y muestreo en `0x817e8200`: 13 instrucciones Sea Islands (`IMAGE_SAMPLE` / `EXP MRT0`), traducidas a **1.213 palabras de SPIR-V válido (éxito 100%)**.
+
+- **Soporte de Descriptores V# Indirectos en Pipeline de Renderizado:**
+  - Actualizado [shader_pipeline.cpp](file:///c:/Users/Alvaro/Downloads/Projects/Gravity%20Rush/engine/src/gnm/shader_pipeline.cpp) para soportar descriptores V# tanto directos en registros como indirectos a través de punteros SRT en la memoria de invitado.
+  - Implementada la expansión continua de atributos 2D a `DefaultVertex` en Vulkan vinculando las coordenadas reales y el color de tinte desde el registro `0x2c54`.
+
+- **Métricas de Verificación:**
+  - **156/156 pruebas automáticas aprobadas al 100%** en 11,13 segundos.
+  - Cero regresiones y cero advertencias bajo `-Wall -Wextra -Wpedantic -Werror`.
+

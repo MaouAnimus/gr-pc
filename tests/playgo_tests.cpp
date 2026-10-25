@@ -15,7 +15,7 @@ using CloseFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t);
 using ToDoListFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, void*, std::uint32_t, std::uint32_t*);
 using SpeedFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, std::uint32_t*);
 using SetSpeedFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, std::uint32_t);
-using LocusFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, std::uint32_t, std::uint32_t*);
+using LocusFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, const std::uint16_t*, std::uint32_t, std::uint8_t*);
 using EtaFn = std::int32_t(GRAVITY_SYSV_ABI*)(std::int32_t, std::uint32_t*);
 
 int main(int argc, char** argv) {
@@ -91,9 +91,11 @@ int main(int argc, char** argv) {
         std::int32_t handle = 0;
         CHECK(fn_open(&handle, nullptr) == SCE_PLAYGO_OK);
 
-        CHECK(fn_locus(handle, 0, nullptr) == SCE_PLAYGO_ERROR_INVALID_ARGUMENT);
-        std::uint32_t locus = 0;
-        CHECK(fn_locus(handle, 0, &locus) == SCE_PLAYGO_OK);
+        const std::uint16_t chunk_id = 0;
+        CHECK(fn_locus(handle, &chunk_id, 1, nullptr) == SCE_PLAYGO_ERROR_INVALID_ARGUMENT);
+        CHECK(fn_locus(handle, nullptr, 0, nullptr) == SCE_PLAYGO_ERROR_INVALID_ARGUMENT);
+        std::uint8_t locus = 0;
+        CHECK(fn_locus(handle, &chunk_id, 1, &locus) == SCE_PLAYGO_OK);
         CHECK(locus == SCE_PLAYGO_LOCUS_LOCAL);
 
         std::uint32_t eta = 999;

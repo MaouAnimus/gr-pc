@@ -206,15 +206,29 @@ GRAVITY_SYSV_ABI std::time_t hle_mktime(struct std::tm* tm) {
 }
 
 GRAVITY_SYSV_ABI int hle_clock_gettime(int clock_id, void* tp) {
-    (void)clock_id;
     struct Timespec { std::int64_t tv_sec; std::int64_t tv_nsec; };
     if (!tp || !guest_memory::accessible(tp, sizeof(Timespec))) return -1;
+    auto* ts = static_cast<Timespec*>(tp);
+
+    // FreeBSD clock IDs:
+    // 0: CLOCK_REALTIME, 9: CLOCK_REALTIME_PRECISE, 10: CLOCK_REALTIME_FAST, 13: CLOCK_SECOND
+    if (clock_id == 0 || clock_id == 9 || clock_id == 10 || clock_id == 13) {
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER uli;
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        constexpr uint64_t epoch_diff = 116444736000000000ULL;
+        const uint64_t ft_unix = uli.QuadPart >= epoch_diff ? uli.QuadPart - epoch_diff : 0;
+        ts->tv_sec = static_cast<int64_t>(ft_unix / 10000000ULL);
+        ts->tv_nsec = static_cast<int64_t>((ft_unix % 10000000ULL) * 100);
+        return 0;
+    }
 
     LARGE_INTEGER freq, counter;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&counter);
 
-    auto* ts = static_cast<Timespec*>(tp);
     ts->tv_sec = counter.QuadPart / freq.QuadPart;
     ts->tv_nsec = ((counter.QuadPart % freq.QuadPart) * 1000000000LL) / freq.QuadPart;
     return 0;

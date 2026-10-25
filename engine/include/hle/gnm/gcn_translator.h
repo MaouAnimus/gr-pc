@@ -31,6 +31,13 @@ struct ResourceSlot {
     std::uint32_t set{};           // assigned Vulkan descriptor set
 };
 
+struct SampledTextureBinding {
+    std::uint32_t resource_sgpr_base{};
+    std::uint32_t sampler_sgpr_base{};
+    std::uint32_t set{};
+    std::uint32_t binding{};
+};
+
 // Configuration that the translator needs beyond the raw instruction stream.
 struct TranslateConfig {
     Stage stage{Stage::Vertex};
@@ -38,7 +45,7 @@ struct TranslateConfig {
     std::uint32_t num_sgprs{16};
     std::uint32_t num_vgprs{16};
     // Number of user data SGPRs (set by SPI_SHADER_USER_DATA_*).
-    std::uint32_t num_user_sgprs{16};
+    std::uint32_t num_user_sgprs{0};
     // Vertex attribute count (for VS).
     std::uint32_t num_vertex_attribs{0};
     // Texture/sampler count (for PS).
@@ -48,6 +55,14 @@ struct TranslateConfig {
     std::vector<std::uint32_t> vertex_strides;
     // Fetch shader vertex component counts per attribute.
     std::vector<std::uint32_t> vertex_components; // 1..4 floats
+    // Explicit interface contracts, never inferred by replacing memory reads.
+    // Each vertex attribute is copied to this first VGPR (v0 is VertexIndex).
+    std::vector<std::uint32_t> vertex_vgpr_bases;
+    // Optional compile-time scalar inputs. Unprovided registers are undefined.
+    std::vector<std::uint32_t> user_sgpr_values;
+    // Exactly one combined 2D sampler is supported, only when its guest
+    // resource/sampler SGPR bases have been verified by the caller.
+    std::optional<SampledTextureBinding> sampled_texture;
 };
 
 // Result of translation.
@@ -57,10 +72,20 @@ struct TranslateResult {
     std::vector<std::uint32_t> spirv; // Valid SPIR-V module if success == true.
     std::vector<ExportInfo> exports;
     std::vector<ResourceSlot> resources;
+    std::size_t error_word_offset{};
+    std::uint32_t error_opcode{};
 };
+
+// Includes translator version and every semantic configuration field.
+std::string cache_identity(const TranslateConfig& config);
 
 // Translate a decoded GCN program into SPIR-V.
 // The config must match what the PM4 context registers configured.
+// The current subset is straight-line VS/PS arithmetic and full uncompressed
+// POS0/PARAM0..15/MRT0 exports. Unsupported fetch/control flow, EXEC/VCC wave
+// operations, LDS, memory/UBO access, interpolation, saturating float-to-integer
+// conversions and compressed/partial exports fail with an ISA offset/opcode.
+// Success additionally requires semantic SPIRV-Tools Vulkan 1.2 validation.
 TranslateResult translate(const Program& program, const TranslateConfig& config);
 
 } // namespace gravity::hle::gnm::gcn

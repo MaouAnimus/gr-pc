@@ -14,7 +14,13 @@ struct ScePlayGoInitParams {
 
 constexpr std::int32_t SCE_PLAYGO_OK                     = 0;
 constexpr std::int32_t SCE_PLAYGO_ERROR_INVALID_ARGUMENT = static_cast<std::int32_t>(0x80AF0001);
-constexpr std::int32_t SCE_PLAYGO_LOCUS_LOCAL            = 1;
+
+enum ScePlayGoLocus : std::uint8_t {
+    SCE_PLAYGO_LOCUS_NONE  = 0,
+    SCE_PLAYGO_LOCUS_BD    = 1,
+    SCE_PLAYGO_LOCUS_NET   = 2,
+    SCE_PLAYGO_LOCUS_LOCAL = 3,
+};
 
 extern "C" {
 GRAVITY_SYSV_ABI std::int32_t scePlayGoInitialize(const ScePlayGoInitParams* params);
@@ -25,7 +31,8 @@ GRAVITY_SYSV_ABI std::int32_t scePlayGoGetToDoList(
     std::int32_t handle, void* out_chunks, std::uint32_t max_count, std::uint32_t* out_count);
 GRAVITY_SYSV_ABI std::int32_t scePlayGoGetInstallSpeed(std::int32_t handle, std::uint32_t* out_speed);
 GRAVITY_SYSV_ABI std::int32_t scePlayGoSetInstallSpeed(std::int32_t handle, std::uint32_t speed);
-GRAVITY_SYSV_ABI std::int32_t scePlayGoGetLocus(std::int32_t handle, std::uint32_t chunk_id, std::uint32_t* out_locus);
+GRAVITY_SYSV_ABI std::int32_t scePlayGoGetLocus(
+    std::int32_t handle, const std::uint16_t* chunk_ids, std::uint32_t count, std::uint8_t* out_locus);
 GRAVITY_SYSV_ABI std::int32_t scePlayGoGetEta(std::int32_t handle, std::uint32_t* out_eta);
 }
 

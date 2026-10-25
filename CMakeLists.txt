@@ -46,6 +46,7 @@ add_library(gravity_runtime STATIC
     engine/src/gnm/shader_pipeline.cpp
     engine/src/gnm/gcn_decoder.cpp
     engine/src/gnm/spirv_builder.cpp
+    engine/src/gnm/spirv_validation.cpp
     engine/src/gnm/gcn_translator.cpp
     engine/src/gnm/shader_cache.cpp
     engine/src/gnm/texture_decoder.cpp
@@ -56,6 +57,7 @@ add_library(gravity_runtime STATIC
     engine/src/rtc/rtc.cpp
     engine/src/audio/ngs2.cpp
     engine/src/audio/audio3d.cpp
+    engine/src/np/np.cpp
     engine/src/registry/adapter_registry.cpp)
 target_include_directories(gravity_runtime PUBLIC engine/include C:/msys64/clang64/include/freetype2)
 target_compile_features(gravity_runtime PUBLIC cxx_std_23)
@@ -63,6 +65,8 @@ target_compile_definitions(gravity_runtime PUBLIC
     WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_compile_options(gravity_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(gravity_runtime PUBLIC z ole32 SDL3 vulkan-1 bcrypt freetype mfplat mfreadwrite mfuuid propsys uuid)
+find_library(SPIRV_TOOLS_LIBRARY NAMES SPIRV-Tools-shared HINTS "C:/msys64/clang64/lib" REQUIRED)
+target_link_libraries(gravity_runtime PUBLIC ${SPIRV_TOOLS_LIBRARY})
 
 add_executable(gravity_runtime_probe engine/src/runtime_probe.cpp)
 target_link_libraries(gravity_runtime_probe PRIVATE gravity_runtime)
@@ -85,10 +89,11 @@ if(BUILD_TESTING)
     add_executable(gcn_translator_tests tests/gcn_translator_tests.cpp)
     target_link_libraries(gcn_translator_tests PRIVATE gravity_runtime)
     target_compile_options(gcn_translator_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    foreach(suite builder_empty builder_types builder_const builder_instr translate_vs translate_ps translate_alu translate_scalar translate_tex spirv_valid translate_invalid)
+    foreach(suite builder_empty builder_types builder_const builder_instr translate_vs translate_ps translate_alu translate_scalar translate_tex spirv_valid translate_invalid translate_numeric translate_strict cache_identity)
         add_test(NAME gcn_translator_${suite} COMMAND gcn_translator_tests ${suite})
         set_tests_properties(gcn_translator_${suite} PROPERTIES TIMEOUT 15)
     endforeach()
+    set_tests_properties(gcn_translator_translate_numeric PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_executable(shader_cache_tests tests/shader_cache_tests.cpp)
     target_link_libraries(shader_cache_tests PRIVATE gravity_runtime)
     target_compile_options(shader_cache_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

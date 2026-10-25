@@ -183,7 +183,10 @@ public:
 
         // 9. Inform GNM subsystem of device and setup shader pipeline
         gnm::setDevice(device_);
-        gnm::VulkanShaderPipeline::instance().initialize(device_, physical_device_, VK_FORMAT_B8G8R8A8_UNORM);
+        if (!gnm::VulkanShaderPipeline::instance().initialize(device_, physical_device_, VK_FORMAT_B8G8R8A8_UNORM,
+                                                           graphics_queue_, graphics_family_)) {
+            cleanup_swapchain(); cleanup_vulkan(); cleanup_sdl(); return {hle::Error::unsupported};
+        }
         gnm::command_queue().set_resolver(gnm::VulkanShaderPipeline::instance().get_resolver());
 
         initialized_ = true;
@@ -337,6 +340,7 @@ private:
         image_available_semaphores_.resize(actual_count);
         render_finished_semaphores_.resize(actual_count);
         in_flight_fences_.resize(actual_count);
+        in_flight_resources_.resize(actual_count);
 
         VkSemaphoreCreateInfo sem_ci{};
         sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -354,6 +358,7 @@ private:
     }
 
     void cleanup_swapchain() {
+        in_flight_resources_.clear(); // all users call after device idle or before any submission
         gnm::VulkanShaderPipeline::instance().reset_video_textures();
         if (device_ == VK_NULL_HANDLE) return;
 
@@ -390,6 +395,7 @@ private:
         if (in_flight_fences_.empty()) return;
 
         if (vkWaitForFences(device_, 1, &in_flight_fences_[current_frame_], VK_TRUE, 5000000000ULL) != VK_SUCCESS) { render_failed_ = true; return; }
+        in_flight_resources_[current_frame_].reset();
 
         uint32_t image_index = 0;
         VkResult res = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
@@ -479,6 +485,8 @@ private:
 
         if (vkQueueSubmit(graphics_queue_, 1, &submit_info, in_flight_fences_[current_frame_]) != VK_SUCCESS) { render_failed_ = true; return; }
 
+        in_flight_resources_[current_frame_] = std::move(ticket.resources);
+
         if (ticket.id && !gnm::command_queue().acknowledge(ticket)) {
             render_failed_ = true; return;
         }
@@ -550,6 +558,7 @@ private:
     std::vector<VkSemaphore> image_available_semaphores_{};
     std::vector<VkSemaphore> render_finished_semaphores_{};
     std::vector<VkFence> in_flight_fences_{};
+    std::vector<std::shared_ptr<void>> in_flight_resources_{};
     uint32_t current_frame_{0};
 
     uint32_t framebuf_width_{1920};

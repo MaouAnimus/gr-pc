@@ -11,6 +11,7 @@
 #include <functional>
 #include <chrono>
 #include <thread>
+#include <windows.h>
 using namespace gravity::hle::gnm;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"Vulkan line %d: %s\n",__LINE__,#x); std::exit(1); } } while(false)
 namespace {
@@ -198,7 +199,7 @@ struct VulkanTest {
             vkCmdBeginRendering(cmd,&info);
         }
     }
-    void finish(bool rendering=true) {
+    void finish(bool rendering=true,const std::function<void()>& after_submit={}) {
         if(rendering) vkCmdEndRendering(cmd);
         VkImageMemoryBarrier barrier{};barrier.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
@@ -217,6 +218,7 @@ struct VulkanTest {
         CHECK(vkResetFences(device,1,&fence)==VK_SUCCESS);
         VkSubmitInfo submit{};submit.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;
         CHECK(vkQueueSubmit(gpu,1,&submit,fence)==VK_SUCCESS);
+        if(after_submit) after_submit();
         CHECK(vkWaitForFences(device,1,&fence,VK_TRUE,5000000000ULL)==VK_SUCCESS);
     }
     void check_pixel(bool green) {
@@ -253,6 +255,110 @@ void add(Words& words,std::uint8_t opcode,std::initializer_list<std::uint32_t> d
 }
 pm4::Diagnostic enqueue(CommandQueue& q,const Words& words) {
     const std::span<const std::uint32_t> span=words;return q.submit({&span,1});
+}
+
+void geometry_upload_regression(VulkanTest& vk) {
+    auto& pipeline=VulkanShaderPipeline::instance();
+    CHECK(pipeline.initialize(vk.device,vk.physical,VK_FORMAT_R8G8B8A8_UNORM,vk.gpu,vk.family));
+    const auto resolver=pipeline.get_resolver();
+    struct Vertex { float x,y,z,u,v,r,g,b,a; };
+    const Vertex hidden{3,3,0,0,0,0,0,1,1};
+    std::array<Vertex,8> left, right;
+    left.fill(hidden);right.fill(hidden);
+    const auto rectangle=[](Vertex* dst,float x0,float x1,float r,float g) {
+        dst[0]={x0,-1,0,0,0,r,g,0,1};dst[1]={x1,-1,0,1,0,r,g,0,1};
+        dst[2]={x0,1,0,0,1,r,g,0,1};dst[3]={x1,1,0,1,1,r,g,0,1};
+    };
+    rectangle(left.data(),-1,0,1,0);rectangle(right.data()+4,0,1,0,1);
+    std::uint16_t left_indices[]{0,1,2,3},right_indices[]{4,5,6,7};
+    // An odd-width texture exercises rowPitch as well as its shader-read layout.
+    alignas(256) std::array<std::uint8_t,24> texture{};
+    for(size_t i=0;i<texture.size();i+=4) {
+        texture[i]=64;texture[i+1]=128;texture[i+2]=192;texture[i+3]=255;
+    }
+    const auto texture_address=reinterpret_cast<std::uintptr_t>(texture.data());
+    CHECK(pipeline.get_or_create_texture(texture_address,3,2,0x1a)!=VK_NULL_HANDLE);
+    Words words;
+    add(words,0x76,{0x0c,static_cast<uint32_t>(texture_address>>8),
+        static_cast<uint32_t>(texture_address>>40)|(0x1aU<<20),2U|(1U<<14),0});
+    auto draw=[&](const auto& vertices,const auto& indices) {
+        const auto vertex_address=reinterpret_cast<std::uintptr_t>(vertices.data());
+        const auto index_address=reinterpret_cast<std::uintptr_t>(indices);
+        add(words,0x76,{0x4c,static_cast<uint32_t>(vertex_address),
+            static_cast<uint32_t>(vertex_address>>32)|(uint32_t(sizeof(Vertex))<<16),8,0});
+        add(words,0x2a,{0});
+        add(words,0x27,{8,static_cast<uint32_t>(index_address),static_cast<uint32_t>(index_address>>32),4,0});
+    };
+    draw(left,left_indices);draw(right,right_indices);
+    CommandQueue queue;
+    std::vector<std::weak_ptr<void>> owners;
+    std::vector<VkBuffer> vertex_buffers,index_buffers;
+    CHECK(queue.set_resolver([&](const auto& state,const auto& request,auto& native) {
+        if(!resolver(state,request,native)) return false;
+        owners.push_back(native.resources);vertex_buffers.push_back(native.vertex_buffers.front());
+        index_buffers.push_back(native.index_buffer);return true;
+    }));
+    CHECK(enqueue(queue,words));
+    RecordingTicket ticket;
+    vk.begin();CHECK(queue.record(vk.cmd,vk.extent,ticket));
+    CHECK(owners.size()==2 && !owners[0].expired() && !owners[1].expired());
+    CHECK(vertex_buffers[0]!=vertex_buffers[1] && index_buffers[0]!=index_buffers[1]);
+    std::shared_ptr<void> fence_resources;
+    vk.finish(true,[&] {
+        fence_resources=std::move(ticket.resources);
+        CHECK(queue.acknowledge(ticket));
+        CHECK(!owners[0].expired() && !owners[1].expired());
+    });
+    CHECK(!owners[0].expired() && !owners[1].expired());
+    fence_resources.reset();CHECK(owners[0].expired() && owners[1].expired());
+    void* mapped{};CHECK(vkMapMemory(vk.device,vk.pixel_memory,0,VK_WHOLE_SIZE,0,&mapped)==VK_SUCCESS);
+    const auto* pixels=static_cast<const uint8_t*>(mapped);
+    const auto* red=pixels+(48*64+16)*4;const auto* green=pixels+(48*64+48)*4;
+    CHECK(std::abs(int(red[0])-64)<=2 && red[1]<=2 && red[2]<=2);
+    CHECK(green[0]<=2 && std::abs(int(green[1])-128)<=2 && green[2]<=2);
+    vkUnmapMemory(vk.device,vk.pixel_memory);
+
+    // Partial-readable vertex memory must fail before reading coords[2..7].
+    SYSTEM_INFO system{};GetSystemInfo(&system);
+    const auto page=static_cast<size_t>(system.dwPageSize);
+    auto* guard=static_cast<uint8_t*>(VirtualAlloc(nullptr,page*2,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
+    CHECK(guard);DWORD old{};CHECK(VirtualProtect(guard+page,page,PAGE_NOACCESS,&old));
+    const float coords[]{-1,-1};std::memcpy(guard+page-sizeof(coords),coords,sizeof(coords));
+    GraphicsState bad;
+    const auto guard_address=reinterpret_cast<std::uintptr_t>(guard+page-sizeof(coords));
+    bad.registers[0x2c4c]=static_cast<uint32_t>(guard_address);
+    bad.registers[0x2c4d]=static_cast<uint32_t>(guard_address>>32)|(8U<<16);
+    bad.registers[0x2c4e]=4;
+    DrawRequest request;request.count=4;request.instances=1;
+    NativeDraw rejected;CHECK(!resolver(bad,request,rejected));CHECK(!rejected.resources);
+    CHECK(VirtualFree(guard,0,MEM_RELEASE));
+
+    // Validate all selected indices and widen first_index+count before adding.
+    const auto left_address=reinterpret_cast<std::uintptr_t>(left.data());
+    bad.registers[0x2c4c]=static_cast<uint32_t>(left_address);
+    bad.registers[0x2c4d]=static_cast<uint32_t>(left_address>>32)|(sizeof(Vertex)<<16);
+    bad.registers[0x2c4e]=8;
+    request.indexed=true;request.index_address=reinterpret_cast<std::uintptr_t>(left_indices);
+    request.first_index=UINT32_MAX;
+    CHECK(!resolver(bad,request,rejected));
+    request.first_index=0;left_indices[3]=8;
+    CHECK(!resolver(bad,request,rejected));left_indices[3]=3;
+
+    // Aborted recordings and failed preflight cannot leave permanent owners.
+    owners.clear();CHECK(enqueue(queue,words));vk.begin();CHECK(queue.record(vk.cmd,vk.extent,ticket));
+    queue.abort(ticket);ticket.resources.reset();
+    CHECK(owners.size()==2 && owners[0].expired() && owners[1].expired());
+    queue.reset();owners.clear();unsigned calls{};
+    CHECK(queue.set_resolver([&](const auto& state,const auto& draw_request,auto& native) {
+        if(!resolver(state,draw_request,native)) return false;
+        owners.push_back(native.resources);return ++calls<2;
+    }));
+    CHECK(enqueue(queue,words));vk.begin();
+    CHECK(queue.record(vk.cmd,vk.extent,ticket).error==pm4::Error::resources && !ticket.id);
+    CHECK(owners.size()==2 && owners[0].expired() && owners[1].expired());
+    vk.finish();vk.check_pixel(false);queue.reset();
+    pipeline.shutdown();
+    std::puts("Per-draw vertex/index snapshots, fence ownership, guard-page rejection, static texture readback and failed-preflight cleanup passed");
 }
 }
 void vulkan_test() {
@@ -327,6 +433,7 @@ void vulkan_test() {
     vk.finish(false);CHECK(command_queue().acknowledge(second));vk.check_pixel(true);
     CHECK(command_queue().stats().submitted_draws==1);
     sceGnmShutdown();
+    geometry_upload_regression(vk);
     std::puts("PM4 Vulkan: auto/indexed16/indexed32/offset draws, readback, transactional retry and GNM ABI integration passed");
 }
 
@@ -335,7 +442,7 @@ void avplayer_vulkan_test(gravity::hle::avplayer::SceAvPlayerHandle handle) {
     VulkanTest vk;
     if(!vk.initialize()) { std::puts("SKIP: Vulkan 1.3 unavailable"); std::exit(77); }
     auto& pipeline = VulkanShaderPipeline::instance();
-    CHECK(pipeline.initialize(vk.device, vk.physical, VK_FORMAT_R8G8B8A8_UNORM));
+    CHECK(pipeline.initialize(vk.device, vk.physical, VK_FORMAT_R8G8B8A8_UNORM,vk.gpu,vk.family));
     CommandQueue queue;
     CHECK(queue.set_resolver(pipeline.get_resolver()));
     std::uintptr_t stable_address{};
